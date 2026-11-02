@@ -26,10 +26,12 @@ export const BRIGHT_AUTO_X = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048,
 export const OFFICIAL_AUTO_Y = [53, 63, 75, 90, 110, 150, 210, 260, 280, 285, 290, 320, 356, 470, 610, 770, 930, 1050];
 export const BRIGHT_AUTO_Y = [53, 65, 80, 100, 140, 210, 300, 400, 480, 540, 600, 660, 740, 840, 970, 1130, 1320, 1500];
 /**
- * Balanced: the official curve as it is up to x = 2048 (dim and indoor light: the brighter curve
- * was found too bright indoors on the camera), then rising to the same 1500 in the brightest light.
+ * Balanced, from the camera: the official curve is too dark indoors, BRIGHT_AUTO_Y a little too
+ * bright there. Up to x = 1024 each point is 65% of the way from the official value to the bright
+ * one in log luminance (about 1.5x official, 0.8x bright indoors), then 75%, 85%, 95%, and the
+ * bright curve itself from x = 16384 on (strong light, where the screen is hard to see).
  */
-export const BALANCED_AUTO_Y = [53, 63, 75, 90, 110, 150, 210, 260, 280, 285, 290, 320, 370, 520, 700, 950, 1250, 1500];
+export const BALANCED_AUTO_Y = [53, 64, 78, 96, 128, 185, 265, 345, 400, 435, 465, 550, 660, 815, 970, 1130, 1320, 1500];
 export type BrightAutoCurve = 'bright' | 'balanced';
 
 export const BRIGHT_AUTO_CLAMP = { address: CLAMP, official: 0xe300341a, bright: 0xe30035dc };
