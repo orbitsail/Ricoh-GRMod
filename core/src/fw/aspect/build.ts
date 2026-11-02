@@ -34,6 +34,8 @@ import { DATESTAMP_BYTE, installDateStamp, lookNames } from './datestamp';
 import { installDateStampMenu } from './datestamp-menu';
 import { installMonoUnlock } from './monounlock';
 import { CINEMA_STYLES, installExtraSlots, installHalation } from './slots';
+import { installCpuLut } from './cpulut';
+import type { CpuLutLook } from './cpulut';
 import { halationLight } from './halation';
 import type { HalationLook } from './halation';
 import { installFactoryHidden, installLookOrder, validateLookLayout } from './looks';
@@ -147,6 +149,8 @@ export interface TestOptions {
   dateStampDiag?: boolean;
   /** Direct Flash diagnostics: the planner records what it saw, the date imprint prints it on the 720x480 picture. */
   directFlashDiag?: boolean;
+  /** Experimental: correction tables applied by the CPU to the JPEGs of these looks (see `cpulut.ts`). */
+  cpuLut?: CpuLutLook[];
 }
 
 export interface AspectResult {
@@ -1073,13 +1077,18 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
     halation.push({ style, light: colour.ownCurves ? halationLight(colour.curves, colour.postQ9) : halationLight() });
   }
   // Last: the added slots compose with the monochrome looks' visibility check.
-  if (slots.length > 0) icons = installExtraSlots(patch, icons, slots, { stashLook: (!!features.dateStamp && !!features.guard) || halation.length > 0, layout: features.lookLayout });
+  const cpuLut = test.cpuLut ?? [];
+  if (cpuLut.length > 0 && slots.length === 0) fail('internal', 'cpu LUT tables need added slots');
+  if (slots.length > 0) icons = installExtraSlots(patch, icons, slots, { stashLook: (!!features.dateStamp && !!features.guard) || halation.length > 0 || cpuLut.length > 0, layout: features.lookLayout });
   else if (features.lookLayout) {
     validateLookLayout(features.lookLayout, 0);
     installLookOrder(patch, features.lookLayout.order);
     installFactoryHidden(patch, features.lookLayout.hidden);
   }
   if (halation.length > 0) icons = installHalation(patch, icons, halation);
+  // After halation: its stub runs second, so the correction comes first and halation and the
+  // date imprint work on the corrected picture.
+  if (cpuLut.length > 0) installCpuLut(patch, cpuLut, LOOK_STASH);
   if (shutdown) icons = installShutdownMenu(patch, icons, shutdown.pictures, shutdown.factory);
   // After every other addition that copies the submenu or list table.
   if (features.directFlash) icons = installDirectFlashMenu(patch, icons);
