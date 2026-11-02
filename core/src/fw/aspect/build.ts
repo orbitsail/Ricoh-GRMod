@@ -1088,7 +1088,7 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
   if (halation.length > 0) icons = installHalation(patch, icons, halation);
   // After halation: its stub runs second, so the correction comes first and halation and the
   // date imprint work on the corrected picture.
-  if (cpuLut.length > 0) installCpuLut(patch, cpuLut, LOOK_STASH);
+  if (cpuLut.length > 0) installCpuLut(patch, cpuLut);
   if (shutdown) icons = installShutdownMenu(patch, icons, shutdown.pictures, shutdown.factory);
   // After every other addition that copies the submenu or list table.
   if (features.directFlash) icons = installDirectFlashMenu(patch, icons);

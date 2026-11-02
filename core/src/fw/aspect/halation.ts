@@ -224,12 +224,24 @@ export function installHalationModule(p: Patch, looks: readonly HalationLook[], 
 }
 
 function contextOf(p: Patch): number | null {
-  const first = p.word(JPEG_EXECUTE);
-  if (first >>> 24 !== 0xea) return null;
-  const stub = branchTarget(JPEG_EXECUTE, first);
-  if (p.word(stub + 4) !== 0xe5911008) return null; // ldr r1,[r1,#8]: the halation stub, not the date imprint's
-  // push; ldr r1,[r1,#8]; movw r0; movt r0
-  return (movImmediate(p.word(stub + 8)) | (movImmediate(p.word(stub + 12)) << 16)) >>> 0;
+  // The stubs at the JPEG encode step form a chain (the last installed runs first). Halation's is
+  // `push; ldr r1,[r1,#8]; movw r0; movt r0; bl; pop {r0-r3,ip,lr}; tail`; the CPU LUT's has the
+  // same shape with another context, so the context's magic decides, else on to the next stub.
+  let at = JPEG_EXECUTE;
+  for (let hop = 0; hop < 4; hop++) {
+    const w = p.word(at);
+    if (w >>> 24 !== 0xea) return null;
+    const stub = branchTarget(at, w);
+    if (p.word(stub + 4) !== 0xe5911008) return null; // ldr r1,[r1,#8]: not the date imprint's stub
+    const ctx = (movImmediate(p.word(stub + 8)) | (movImmediate(p.word(stub + 12)) << 16)) >>> 0;
+    const magic = p.word(ctx + MAGIC_AT);
+    if (magic === CTX_MAGIC || magic === CTX_MAGIC_TEST || magic === CTX_MAGIC_081 || magic === CTX_MAGIC_072) return ctx;
+    let k = 4;
+    while (k < 16 && p.word(stub + 4 * k) !== 0xe8bd500f) k++; // pop {r0-r3,ip,lr}
+    if (k === 16) return null;
+    at = stub + 4 * (k + 1);
+  }
+  return null;
 }
 
 /**

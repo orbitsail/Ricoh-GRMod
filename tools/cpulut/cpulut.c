@@ -15,10 +15,13 @@
  * Y' | Cb' << 16 and Cr', every value with 4 fraction bits (0..4095; results above 255 are
  * clipped). Tetrahedral interpolation with weights of 1/16. The two pixels of a pair share Cb and
  * Cr: each is looked up with its own Y, Y' goes to each pixel and the mean of the two Cb' (Cr')
- * to the pair.
+ * to the pair. The context has each table's sum of words: a table that does not add up (not in
+ * memory as it was built) is not used, and the pictures stay as the hardware made them.
  *
- * Which look: `stash` (written by the development step, see lookstash.ts): bits 0..7 the style,
- * bit 16 valid. Looks without a table are left alone.
+ * Which look (lookstash.ts; bits 0..7 the style, bit 16 valid): `frame`, the look at the start of
+ * the exposure (or of the RAW file being developed), so that a look chosen while the picture is
+ * still being processed does not change it; else `stash`, the look the development step last ran
+ * with. Looks without a table are left alone.
  *
  * Position-independent: no global data, every address comes in through `struct ctx`. No division.
  */
@@ -41,28 +44,52 @@ struct ctx {
   void *(*cache)(void);                              /* 0x538f0448 */
   void (*invalidate)(void *cache, u32 addr, u32 n);  /* 0x538f04d8 */
   void (*clean)(void *cache, u32 addr, u32 n);       /* 0x538f04c4 */
-  const volatile u32 *stash;
+  const volatile u32 *frame;  /* FRAME_LOOK */
+  const volatile u32 *stash;  /* LOOK_STASH */
   const u32 *tables;  /* `count` tables of NODES * 2 words */
   u32 count;
-  u32 magic;          /* 'CLT1' */
+  u32 magic;          /* 'CLT2' */
   u8 look_map[64];    /* style -> table + 1, 0: none */
+  u32 sum[64];        /* per table: the sum of its words; a table that does not add up is not used */
 };
 
 #define NY 17u
 #define NC 33u
 #define NODES (NY * NC * NC)
-#define MAGIC 0x31544c43u /* 'CLT1' */
+#define MAGIC 0x32544c43u /* 'CLT2' */
 #define STASH_VALID 0x10000u
 static int ram(const void *p) {
   u32 a = (u32)p;
   return a >= 0x40000000u && a < 0xc0000000u && (a & 3) == 0;
 }
 
+/* `n` bytes from `a` lie in memory a picture can be in: RAM below the firmware's image
+ * (0x53000000..0x55000000, read-only), above it up to 0x80000000, or 0xA0000000..0xC0000000
+ * (0x80000000..0xA0000000 has no access in the start-up translation table). */
+static int span_ok(u32 a, u32 n) {
+  u32 end;
+  if (a >= 0x40000000u && a < 0x53000000u) end = 0x53000000u;
+  else if (a >= 0x55000000u && a < 0x80000000u) end = 0x80000000u;
+  else if (a >= 0xa0000000u && a < 0xc0000000u) end = 0xc0000000u;
+  else return 0;
+  return n <= end - a;
+}
+
 static int picture_ok(const struct picture *p) {
-  u32 w = p->width, h = p->height;
+  u32 w = p->width, h = p->height, n;
   /* (an even stride keeps every pair's Cb, Cr halfword aligned for the assembly's ldrh) */
-  if (p->format != 1 || !ram(p->y) || !ram(p->c) || w < 64 || h < 48 || p->stride < w || (p->stride & 1) || p->c_height < h) return 0;
-  return w <= 12000 && h <= 12000;
+  if (p->format != 1 || w < 64 || h < 48 || w > 12000 || h > 12000 || p->stride < w || (p->stride & 1) || p->c_height < h) return 0;
+  if (((u32)p->y & 3) || ((u32)p->c & 3)) return 0;
+  /* every row of both planes, as far as the cache maintenance reaches (64-byte lines) */
+  n = h * p->stride + 63;
+  return span_ok((u32)p->y, n) && span_ok((u32)p->c, n);
+}
+
+/* Sum of a table's words: catches a table that is not in memory as it was built. */
+static u32 table_sum(const u32 *t) {
+  u32 s = 0, i;
+  for (i = 0; i < NODES * 2; i++) s += t[i];
+  return s;
 }
 
 static void sync(const struct ctx *k, void *cache, const struct picture *p, int clean) {
@@ -237,16 +264,20 @@ static void correct(const struct ctx *k, void *cache, const struct picture *p, c
 
 /* Entry: k = context, config = JpegEncodeMacroProcess configuration. */
 void cpulut(const struct ctx *k, u32 *config) {
-  u32 st = *k->stash, style, e, i, j;
+  u32 st, style, e, i, j;
   const u32 *t;
   struct picture *seen[4];
   void *cache;
-  if (k->magic != MAGIC || !(st & STASH_VALID) || !ram(config) || !ram(k->tables)) return;
+  if (k->magic != MAGIC || !ram((const void *)k->frame) || !ram((const void *)k->stash)) return;
+  st = *k->frame;
+  if (!(st & STASH_VALID)) st = *k->stash;
+  if (!(st & STASH_VALID) || !ram(config) || !ram(k->tables)) return;
   style = st & 0xff;
   if (style >= 64) return;
   e = k->look_map[style];
-  if (!e || e > k->count) return;
+  if (!e || e > k->count || e > 64) return;
   t = k->tables + (e - 1) * (NODES * 2);
+  if (table_sum(t) != k->sum[e - 1]) return;
   cache = k->cache();
   /* One picture per buffer (another entry with the same planes describes the whole sensor). */
   for (i = 0; i < 4; i++) {
