@@ -25,20 +25,28 @@ const TOP = 0x532681c4;
 export const BRIGHT_AUTO_X = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
 export const OFFICIAL_AUTO_Y = [53, 63, 75, 90, 110, 150, 210, 260, 280, 285, 290, 320, 356, 470, 610, 770, 930, 1050];
 export const BRIGHT_AUTO_Y = [53, 65, 80, 100, 140, 210, 300, 400, 480, 540, 600, 660, 740, 840, 970, 1130, 1320, 1500];
+/**
+ * Balanced: the official curve as it is up to x = 2048 (dim and indoor light: the brighter curve
+ * was found too bright indoors on the camera), then rising to the same 1500 in the brightest light.
+ */
+export const BALANCED_AUTO_Y = [53, 63, 75, 90, 110, 150, 210, 260, 280, 285, 290, 320, 370, 520, 700, 950, 1250, 1500];
+export type BrightAutoCurve = 'bright' | 'balanced';
 
 export const BRIGHT_AUTO_CLAMP = { address: CLAMP, official: 0xe300341a, bright: 0xe30035dc };
 export const BRIGHT_AUTO_TOP = { address: TOP, official: 0xe300041a, bright: 0xe30005dc };
 
-export function installBrightAuto(patch: Patch): void {
+export function installBrightAuto(patch: Patch, curve: BrightAutoCurve = 'bright'): void {
+  const Y = curve === 'balanced' ? BALANCED_AUTO_Y : BRIGHT_AUTO_Y;
   for (let i = 0; i < BRIGHT_AUTO_X.length; i++) {
     expectWord(patch, CURVE_X + 8 * i, BRIGHT_AUTO_X[i]);
     expectWord(patch, CURVE_Y + 8 * i, OFFICIAL_AUTO_Y[i]);
   }
   expectWord(patch, CLAMP, 0xe300341a); // movw r3, #0x41a
   expectWord(patch, TOP, 0xe300041a); // movw r0, #0x41a
-  for (let i = 1; i < BRIGHT_AUTO_Y.length; i++) if (BRIGHT_AUTO_Y[i] < BRIGHT_AUTO_Y[i - 1]) throw new Error('bright auto curve must not decrease');
-  for (let i = 0; i < BRIGHT_AUTO_Y.length; i++) {
-    if (BRIGHT_AUTO_Y[i] !== OFFICIAL_AUTO_Y[i]) patch.setWord(CURVE_Y + 8 * i, BRIGHT_AUTO_Y[i], `brighter Auto screen: curve point ${i}`);
+  if (Y.length !== BRIGHT_AUTO_X.length || Y[Y.length - 1] !== 1500) throw new Error('auto curve: 18 points ending at 1500');
+  for (let i = 1; i < Y.length; i++) if (Y[i] < Y[i - 1]) throw new Error('bright auto curve must not decrease');
+  for (let i = 0; i < Y.length; i++) {
+    if (Y[i] !== OFFICIAL_AUTO_Y[i]) patch.setWord(CURVE_Y + 8 * i, Y[i], `brighter Auto screen (${curve}): curve point ${i}`);
   }
   patch.setWord(CLAMP, 0xe30035dc, 'brighter Auto screen: upper limit 1500'); // movw r3, #0x5dc
   patch.setWord(TOP, 0xe30005dc, 'brighter Auto screen: value above the last point 1500'); // movw r0, #0x5dc

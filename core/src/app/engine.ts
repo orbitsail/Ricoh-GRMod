@@ -270,8 +270,8 @@ export interface BuildOptions {
   filmCount?: number;
   /** Test builds only (experimental): CPU correction tables for added slots (`aspect/cpulut.ts`). */
   cpuLut?: aspect.CpuLutLook[];
-  /** A brighter rear screen when Outdoor View Setting is Auto (`aspect/brightauto.ts`). */
-  brightAuto?: boolean;
+  /** A brighter rear screen when Outdoor View Setting is Auto (`aspect/brightauto.ts`): true / 'bright', or 'balanced'. */
+  brightAuto?: boolean | 'bright' | 'balanced';
 }
 
 export interface ShutdownImage {
@@ -984,7 +984,7 @@ export class Engine {
     const test = {
       ...(options && options.dateStampFixed ? { dateStampFixed: options.dateStampFixed, dateStampDiag: !!options.dateStampDiag } : {}),
       ...(options && options.cpuLut && options.cpuLut.length ? { cpuLut: options.cpuLut } : {}),
-      ...(options && options.brightAuto ? { brightAuto: true } : {}),
+      ...(options && options.brightAuto ? { brightAuto: options.brightAuto } : {}),
     };
     const { decoded: _decoded, ...rest } = await buildFirmware(this.raw, edits, ratios, clarity, features, test);
     return rest;

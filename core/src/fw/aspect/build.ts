@@ -152,8 +152,9 @@ export interface TestOptions {
   directFlashDiag?: boolean;
   /** Experimental: correction tables applied by the CPU to the JPEGs of these looks (see `cpulut.ts`). */
   cpuLut?: CpuLutLook[];
-  /** A brighter rear screen when Outdoor View Setting is Auto (see `brightauto.ts`; PR #16). */
-  brightAuto?: boolean;
+  /** A brighter rear screen when Outdoor View Setting is Auto (see `brightauto.ts`; PR #16): true or
+   * 'bright' for the PR's curve, 'balanced' for the official curve indoors and brighter in strong light. */
+  brightAuto?: boolean | 'bright' | 'balanced';
 }
 
 export interface AspectResult {
@@ -1092,7 +1093,7 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
   // After halation: its stub runs second, so the correction comes first and halation and the
   // date imprint work on the corrected picture.
   if (cpuLut.length > 0) installCpuLut(patch, cpuLut);
-  if (test.brightAuto) installBrightAuto(patch);
+  if (test.brightAuto) installBrightAuto(patch, test.brightAuto === 'balanced' ? 'balanced' : 'bright');
   if (shutdown) icons = installShutdownMenu(patch, icons, shutdown.pictures, shutdown.factory);
   // After every other addition that copies the submenu or list table.
   if (features.directFlash) icons = installDirectFlashMenu(patch, icons);
