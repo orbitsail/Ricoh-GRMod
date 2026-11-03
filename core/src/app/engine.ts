@@ -276,6 +276,8 @@ export interface BuildOptions {
   awbBlend?: number;
   /** The plain Auto white balance with tables fitted against lamps / bright areas in the frame (`aspect/awbfit.ts`). */
   awbFit?: boolean;
+  /** A learned white balance for the plain Auto (`aspect/awbml.ts`); experimental. */
+  awbLearn?: boolean;
 }
 
 export interface ShutdownImage {
@@ -991,6 +993,7 @@ export class Engine {
       ...(options && options.brightAuto ? { brightAuto: options.brightAuto } : {}),
       ...(options && options.awbBlend ? { awbBlend: options.awbBlend } : {}),
       ...(options && options.awbFit ? { awbFit: true } : {}),
+      ...(options && options.awbLearn ? { awbLearn: true } : {}),
     };
     const { decoded: _decoded, ...rest } = await buildFirmware(this.raw, edits, ratios, clarity, features, test);
     return rest;

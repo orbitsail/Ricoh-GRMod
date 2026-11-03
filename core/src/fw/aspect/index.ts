@@ -35,3 +35,4 @@ export { BALANCED_AUTO_Y, BRIGHT_AUTO_CLAMP, BRIGHT_AUTO_TOP, BRIGHT_AUTO_X, BRI
 export type { BrightAutoCurve } from './brightauto';
 export { installAwbBlend, installAwbTables, officialAutoTables } from './awbblend';
 export { installAwbFit } from './awbfit';
+export { installAwbLearn } from './awbml';
