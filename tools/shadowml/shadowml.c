@@ -15,7 +15,8 @@
  *
  * Returns t in 0..0x800, or -1 (the camera's own "no correction" result) for an unusable grid, no counted block, a model blob
  * that does not pass its checks, or a wrong context. Reads only the statistic planes of the shooting record P and the context;
- * writes nothing but its own stack (under 1 KB) and, for live view / movie, one state word (throttling, see shadowml()).
+ * writes nothing but its own stack (about 300 bytes), its scratch (one operator-new allocation, made on the first computing call;
+ * if it fails the call returns -1 and the next one tries again) and, for live view / movie, one state word (throttling).
  *
  * Integer only (no float, no division by variables, no 64 bit division or variable shifts), position independent, no global
  * data: everything it needs comes through the context.
@@ -28,6 +29,7 @@ typedef unsigned int u32;
 typedef int i32;
 typedef unsigned long long u64;
 typedef long long i64;
+typedef __UINTPTR_TYPE__ uptr;
 
 struct shadowml_ctx {
   u32 magic;        /* SHADOWML_MAGIC */
@@ -35,6 +37,20 @@ struct shadowml_ctx {
   u32 blob_len;     /* its length in bytes */
   u32 period;       /* live view / movie (mode 1, 2): compute on every period-th call and hold the result in between (0, 1: always compute) */
   u32 *state;       /* one RAM word for that (zero at start-up); live view / movie only, a still never touches it; may be 0 when period <= 1 */
+  void *(*alloc)(u32 bytes); /* the firmware's operator new; called once, for the scratch */
+  uptr *slot;       /* the RAM word (zero at start-up) that keeps the scratch pointer */
+};
+
+struct acc { u32 n, sum, clip, sr, sb; };
+
+/* The working memory of one computation (kept off the stack): live view / movie and stills have one each, as two disjoint halves of
+ * one allocation, because both can run the core at the same time. */
+struct scratch {
+  u16 hist[SHADOWML_NBINS];
+  u16 frac[16];
+  i32 F[SHADOWML_NF];
+  u32 qb[11];
+  struct acc ac, ab;   /* centre and border sums */
 };
 
 static u32 lg8(u32 x) { /* 256 log2(x), x >= 1 */
@@ -58,7 +74,6 @@ static u32 udiv(u32 a, u32 b) { /* b in 1 .. 2^31 - 1 */
   return q;
 }
 
-struct acc { u32 n, sum, clip, sr, sb; };
 
 /* len consecutive blocks of one row segment, for hl = 0 and hl = 1 (two copies: the shift is a constant in each). The sums are of
  * the clamped channels before the hl doubling (the caller shifts them); a doubled channel is near-clipped when the clamped one
@@ -125,11 +140,13 @@ static int model(const u32 *w, const i32 *F, i32 *t) {
 }
 
 /* the feature vector (ref.py); 0 when the grid is unusable or no block is counted */
-static int features(const u8 *P, u32 mode, u32 hl, u32 idx, i32 *F) {
-  u16 hist[SHADOWML_NBINS], frac[16];
-  struct acc ac = {0, 0, 0, 0, 0}, ab = {0, 0, 0, 0, 0};
+static int features(const u8 *P, u32 mode, u32 hl, u32 idx, struct scratch *sc_) {
+  u16 *hist = sc_->hist, *frac = sc_->frac;
+  i32 *F = sc_->F;
+  u32 *qb = sc_->qb;
+  struct acc *ac = &sc_->ac, *ab = &sc_->ab;
   const u32 *R, *G, *B, *C;
-  u32 W, H, nblk, y, x0, x1, n, cum = 0, bi = 0, k, total, mb, j, qb[11], nc, nb, sc, sb, clip;
+  u32 W, H, nblk, y, x0, x1, n, cum = 0, bi = 0, k, total, mb, j, nc, nb, sc, sb, clip;
 
   if (mode == 1u || mode == 2u) {
     R = (const u32 *)(P + 0x4D2C0u); G = (const u32 *)(P + 0x512C0u); B = (const u32 *)(P + 0x592C0u); C = (const u32 *)(P + 0x5F2C0u);
@@ -142,18 +159,20 @@ static int features(const u8 *P, u32 mode, u32 hl, u32 idx, i32 *F) {
   if (W == 0 || H == 0 || nblk > SHADOWML_MAXBLOCKS) return 0;
   hl = hl ? 1u : 0u;
   for (j = 0; j < SHADOWML_NBINS; j++) hist[j] = 0;
+  ac->n = ac->sum = ac->clip = ac->sr = ac->sb = 0;
+  ab->n = ab->sum = ab->clip = ab->sr = ab->sb = 0;
   x0 = W >> 2; x1 = W - (W >> 2);
   for (y = 0; y < H; y++) {
     u32 o = y * W;
     if (y >= (H >> 2) && y < H - (H >> 2)) {
-      seg(R + o, G + o, B + o, C + o, x0, hl, hist, &ab);
-      seg(R + o + x0, G + o + x0, B + o + x0, C + o + x0, x1 - x0, hl, hist, &ac);
-      seg(R + o + x1, G + o + x1, B + o + x1, C + o + x1, W - x1, hl, hist, &ab);
+      seg(R + o, G + o, B + o, C + o, x0, hl, hist, ab);
+      seg(R + o + x0, G + o + x0, B + o + x0, C + o + x0, x1 - x0, hl, hist, ac);
+      seg(R + o + x1, G + o + x1, B + o + x1, C + o + x1, W - x1, hl, hist, ab);
     } else {
-      seg(R + o, G + o, B + o, C + o, W, hl, hist, &ab);
+      seg(R + o, G + o, B + o, C + o, W, hl, hist, ab);
     }
   }
-  nc = ac.n; nb = ab.n; sc = ac.sum << hl; sb = ab.sum << hl; clip = ac.clip + ab.clip;
+  nc = ac->n; nb = ab->n; sc = ac->sum << hl; sb = ab->sum << hl; clip = ac->clip + ab->clip;
   n = nc + nb;
   if (n == 0) return 0;
   for (j = 0; j < 16; j++) frac[j] = (u16)(lg8(33u + 2u * j) - 1280u);
@@ -181,20 +200,30 @@ static int features(const u8 *P, u32 mode, u32 hl, u32 idx, i32 *F) {
   F[21] = (i32)hl;
   F[22] = (i32)udiv((n << 12) + (nblk >> 1), nblk);
   F[23] = F[5] - F[0]; F[24] = F[5] - F[2]; F[25] = F[5] - F[3]; F[26] = F[10] - F[5];
-  total = (ac.sum + ab.sum) << hl;   /* the sums of G, R and B over the counted blocks */
+  total = (ac->sum + ab->sum) << hl;   /* the sums of G, R and B over the counted blocks */
   if (!total) total = 1u;
-  k = (ac.sr + ab.sr) << hl;
+  k = (ac->sr + ab->sr) << hl;
   F[27] = (i32)(lg8(k ? k : 1u) - lg8(total));
-  k = (ac.sb + ab.sb) << hl;
+  k = (ac->sb + ab->sb) << hl;
   F[28] = (i32)(lg8(k ? k : 1u) - lg8(total));
   return 1;
 }
 
 static i32 compute(const struct shadowml_ctx *ctx, const u8 *P, u32 mode, u32 hl, u32 idx) {
-  i32 F[SHADOWML_NF], t;
+  struct scratch *sc;
+  i32 t;
   if (!blob_ok(ctx->blob, ctx->blob_len)) return -1;
-  if (!features(P, mode, hl, idx, F)) return -1;
-  if (!model(ctx->blob, F, &t)) return -1;
+  if (!ctx->alloc || !ctx->slot) return -1;
+  sc = (struct scratch *)*ctx->slot;
+  if (!sc) {
+    struct scratch *n = (struct scratch *)ctx->alloc(2u * (u32)sizeof(struct scratch));
+    if (!n) return -1;
+    if (!*ctx->slot) *ctx->slot = (uptr)n;      /* another task may have been first: use its allocation then */
+    sc = (struct scratch *)*ctx->slot;
+  }
+  if (mode == 1u || mode == 2u) sc++;           /* the second half is the live view / movie one */
+  if (!features(P, mode, hl, idx, sc)) return -1;
+  if (!model(ctx->blob, sc->F, &t)) return -1;
   return t < 0 ? -1 : t;
 }
 

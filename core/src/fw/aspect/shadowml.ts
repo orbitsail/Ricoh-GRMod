@@ -49,6 +49,9 @@ export const SHADOWML_GAIN_NEW = 0x400;
 export const SHADOWML_PERIOD = 4;
 /** The throttling state word (free RAM before the heap; zeroed at start-up). */
 export const SHADOWML_SLOT = 0x558372fc;
+/** The firmware's operator new (the module calls it once) and the RAM word that keeps the scratch pointer (zero at start-up). */
+export const SHADOWML_ALLOC = 0x538e09b0;
+export const SHADOWML_SCRATCH_SLOT = 0x558372d4;
 const ZERO_FILL_END = 0x53000460;
 
 function fail(code: string, message: string): never {
@@ -100,7 +103,7 @@ export function installShadowLearn(p: Patch, options: { model?: Uint8Array } = {
   }
   const module = shadowmlModule();
   const blob = options.model ?? shadowmlData();
-  const ctx = p.append(u32le([SHADOWML_MAGIC, 0, blob.length, SHADOWML_PERIOD, SHADOWML_SLOT]), 16);
+  const ctx = p.append(u32le([SHADOWML_MAGIC, 0, blob.length, SHADOWML_PERIOD, SHADOWML_SLOT, SHADOWML_ALLOC, SHADOWML_SCRATCH_SLOT]), 16);
   const code = p.append(module, 16);
   const stub = p.append((at) => assembleWords(
     `ldrb r0,[r9,#0x8a]

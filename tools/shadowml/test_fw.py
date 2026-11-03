@@ -44,6 +44,7 @@ SB, PREC, THIS, OUTB, CURVE, LVL, MODEL = 0x60000000, 0x60100000, 0x60800000, 0x
 P_SIZE = 0x70000
 RAMSTATE = (0x553A0B30, 0x40)       # the live-view smoothing state of the core (flag, position, ring)
 SLOT = 0x558372FC
+SCRATCH_SLOT = 0x558372D4
 PERIOD = 4
 TB4_STOCK_FIX = 0x400               # the base RTOS has the old Auto gain; the injected runs patch it, as the build does
 
@@ -61,14 +62,18 @@ class Core:
         self.rtos = open(rtos, 'rb').read()
         self.feeder = feeder
         self.allocs = 0
+        self.alloc_sizes = []
+        self.fail_alloc = False
         self.insn = 0
         self.count_on = False
         self.entries = []          # (sp, r0..r3, [sp]) at every entry of the module
         mu = e.mu
         def skip(uc, addr, size, user): uc.reg_write(UC_ARM_REG_PC, uc.reg_read(fwemu.UC_ARM_REG_LR))
         if not realy: mu.hook_add(UC_HOOK_CODE, skip, begin=0x538F75FC, end=0x538F75FC + 4)    # the Y-array builder: not needed (the planes are given)
-        def on_alloc(uc, a, s, u): self.allocs += 1
-        mu.hook_add(UC_HOOK_CODE, on_alloc, begin=ALLOC, end=ALLOC + 4)
+        def on_alloc(uc, a, s, u):
+            self.allocs += 1
+            if self.fail_alloc: uc.reg_write(UC_ARM_REG_R0, 0); uc.reg_write(UC_ARM_REG_PC, uc.reg_read(fwemu.UC_ARM_REG_LR))
+        mu.hook_add(UC_HOOK_CODE, on_alloc, begin=ALLOC, end=ALLOC)
         def on_any(uc, a, s, u):
             if self.count_on: self.insn += 1
         mu.hook_add(UC_HOOK_CODE, on_any)
@@ -84,6 +89,10 @@ class Core:
                 self.entries.append((sp, [uc.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R0 + 1, UC_ARM_REG_R0 + 2, UC_ARM_REG_R3)],
                                      struct.unpack('<I', bytes(uc.mem_read(sp, 4)))[0]))
             mu.hook_add(UC_HOOK_CODE, on_entry, begin=self.code, end=self.code)
+            # the argument of the module's one call of operator new (the firmware's own hook at the function turns r0 into the result at once)
+            sites = [self.code + 4 * i for i in range(0x6C0) if word(self.rtos, self.code + 4 * i) & 0xFFFFFFF0 == 0xE12FFF30]
+            assert len(sites) == 1, 'one indirect call in the module'
+            mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, u: self.alloc_sizes.append(uc.reg_read(UC_ARM_REG_R0)), begin=sites[0], end=sites[0])
 
     def locate(self):
         w = word(self.rtos, HOOK)
@@ -132,7 +141,7 @@ class Core:
         e.w16(SB + 0x44, idx44); mu.mem_write(SB + 0x8D, bytes([mode]))
         mu.mem_write(SB + 0x8A, bytes([b8a])); mu.mem_write(SB + 0x8B, bytes([b8b]))
         e.w32(THIS + 0x828, CURVE)
-        self.allocs = 0; self.entries = []; self.insn = 0
+        self.allocs = 0; self.alloc_sizes = []; self.entries = []; self.insn = 0
         self.count_on = True
         args = (THIS, THIS + 0x14, OUTB, SB, LVL) + ((0,) if align8 else ())
         r = e.call(F_CORE, *args, count=20_000_000)
@@ -204,6 +213,7 @@ def main():
         hooked.set_model(blob)
         s.feeder.seq = ref.Seq(blob, 1)
         for lvflag in ((True,) if mode in (1, 2) else (True,)):
+            slot0 = hooked.e.r32(SCRATCH_SLOT)
             rh = hooked.run(P, 0, hl, idx, mode, lv_flag=lvflag)
             rs = s.run(P, 0, hl, idx, mode, lv_flag=lvflag)
             cnt['auto'] += 1
@@ -218,8 +228,23 @@ def main():
             for sp, regs, a5 in hooked.entries:
                 if sp % 8 or regs[1] != PREC or regs[2] != mode or regs[3] != hl or a5 != min(idx, 0x60) or regs[0] != hooked.ctx:
                     bad.append(('call args', tag, hex(sp), [hex(r) for r in regs], a5))
-            if hooked.allocs: bad.append(('operator new called', tag))
+            # the scratch: operator new is called once (2 x 776 bytes) while its pointer word is zero, never after that
+            if hooked.allocs > (1 if slot0 == 0 else 0) or any(x != 2 * 776 for x in hooked.alloc_sizes): bad.append(('operator new', tag, hooked.alloc_sizes))
+            if hooked.allocs: cnt['allocs'] = cnt.get('allocs', 0) + 1
+            if hooked.e.r32(SCRATCH_SLOT) == 0 and rh != -1 and hooked.entries: bad.append(('no scratch', tag))
         stock_entries = len(hooked.entries)
+    # a failing operator new: the call gives -1 (the camera's "no correction"), the pointer word stays 0, and the next call retries and works
+    P0 = cases[0][1]
+    f0 = Core(PRE); f0.set_model(models[0]); f0.fail_alloc = True
+    fb = feeder_core(models[0]); fb.feeder.seq = ref.Seq(models[0], 1)
+    fb.feeder.t = lambda P, mode, hl, idx: -1
+    ra = f0.run(P0, 0, 0, 40, 0); rb_ = fb.run(P0, 0, 0, 40, 0)
+    ok_fail = f0.allocs == 1 and f0.e.r32(SCRATCH_SLOT) == 0 and ra == rb_ and same_state(f0.state(), fb.state())
+    f0.fail_alloc = False
+    f0.run(P0, 0, 0, 40, 0)
+    ok_fail &= f0.allocs == 1 and f0.e.r32(SCRATCH_SLOT) != 0
+    if not ok_fail: bad.append(('failed allocation',))
+    print(f'   operator new fails: -1 / no correction, pointer word stays 0, retried on the next call: {"ok" if ok_fail else "FAILED"}; one allocation of 1552 bytes in {cnt.get("allocs", 0)} of the Auto calls')
     print(f'1. Auto, hooked image vs the base image fed with t from ref.py: {cnt["auto"]} calls ({len(dngs) * 4} DNG, 120 random), models {len(models)}; '
           f't<0: {cnt["t_neg"]}, t=0: {cnt["t_zero"]}, t>0: {cnt["t_pos"]}; levels reached {sorted(cnt["levels"])}; mismatches {len(bad)}', flush=True)
 

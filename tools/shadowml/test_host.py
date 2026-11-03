@@ -45,6 +45,10 @@ class Lib:
         lib.host_run.argtypes = [ctypes.c_char_p, ctypes.c_uint, ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint,
                                  ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
 
+        lib.host_cfg.argtypes = [ctypes.c_int, ctypes.c_int]
+        lib.host_allocs.restype = ctypes.c_int
+        lib.host_slot.restype = ctypes.c_ulonglong
+
     def run(self, P, blob, mode, hl, idx, magic=ref.MAGIC, period=1, state=None):
         same, fok = ctypes.c_int(), ctypes.c_int()
         F = (ctypes.c_int * ref.NF)()
@@ -288,6 +292,29 @@ def run_lib(name, lib, dngs, n_random, seed):
     P = make_P(0, w, h, R, G, B, C, rng)
     for blob in (loop_blob(), b'', b'SHMB', bytes(40), models[0][:67], models[0] + b'\1\2\3', bytes(rnd.randrange(256) for _ in range(500))):
         st.check(lib, 'fixed blob', P, blob, 0, 0, 10)
+    # 5. the scratch: one allocation, kept; a failed allocation gives -1 (and is retried); the two halves are disjoint
+    SCR = 776
+    w, h, R, G, B, C = scene(rng, 0)
+    PS, PL = make_P(0, w, h, R, G, B, C, rng), make_P(1, w, h, R, G, B, C, rng)
+    blob = models[0]
+    lib.lib.host_cfg(1, 1)
+    ok = lib.run(PS, blob, 0, 0, 40)[0] == -1 and lib.run(PL, blob, 1, 0, 40)[0] == -1 and lib.lib.host_slot() == 0 and lib.lib.host_allocs() == 2
+    lib.lib.host_cfg(0, 0)
+    r1 = lib.run(PS, blob, 0, 0, 40)[0]
+    ok &= r1 == ref.shadowml_ref(blob, bytes(PS), 0, 0, 40) and lib.lib.host_allocs() == 3 and lib.lib.host_slot() != 0
+    half0 = ctypes.string_at(lib.lib.host_slot(), SCR)
+    r2 = lib.run(PL, blob, 1, 0, 40)[0]
+    ok &= r2 == ref.shadowml_ref(blob, bytes(PL), 1, 0, 40) and lib.lib.host_allocs() == 3          # no second allocation
+    ok &= ctypes.string_at(lib.lib.host_slot(), SCR) == half0                                       # live view left the still half alone
+    half1 = ctypes.string_at(lib.lib.host_slot() + SCR, SCR)
+    lib.run(PS, blob, 3, 1, 12)
+    ok &= ctypes.string_at(lib.lib.host_slot() + SCR, SCR) == half1                                 # a still left the live-view half alone
+    # a bad blob never allocates
+    lib.lib.host_cfg(0, 1)
+    ok &= lib.run(PS, b'', 0, 0, 40)[0] == -1 and lib.lib.host_allocs() == 0
+    lib.lib.host_cfg(0, 1)
+    if not ok:
+        st.bad.append(('scratch', r1, r2)); 
     print(f'{name}: {st.n} calls ({n_dng} DNG, {n_edge} edge, {n_random} random + fixed); results t<0: {st.neg}, t=0: {st.zero}, t>0: {st.pos}; '
           f'feature vectors compared {st.feat}; record unchanged {st.unchanged}/{st.n}; mismatches {len(st.bad)} ({time.time() - t0:.0f} s)', flush=True)
     for b in st.bad[:8]: print('MISMATCH', b)
