@@ -194,6 +194,26 @@ def main():
     v6m = np.mean(ins['v6'])
     print(f'   v6 Auto estimate alone {int(v6m):,}; this firmware: computing call +{int(np.mean(ins["compute"]) - v6m):,}, cached call +{int(np.mean(ins["cached"]) - v6m):,}; '
           f'average over a period of {ref.PERIOD}: +{int((np.mean(ins["compute"]) + (ref.PERIOD - 1) * np.mean(ins["cached"])) / ref.PERIOD - v6m):,}')
+    # ---- 4. the image against the previous verified build: only the call word and the appended context / module / stub / tables differ
+    import os
+    prev = os.environ.get('PREV_RTOS', f'{SPD}/cpulut/fw8/v7b/RTOS.bin')
+    if os.path.exists(prev):
+        a, b = open(prev, 'rb').read(), open(V7, 'rb').read()
+        base = 0x53000000
+        wd = lambda r, x: struct.unpack_from('<I', r, x - base)[0]
+        def stub_of(r):
+            w = wd(r, 0x53938E2C); off = struct.unpack('<i', struct.pack('<I', (w & 0xffffff) << 8))[0] >> 8
+            return 0x53938E2C + 8 + off * 4
+        def ctx_of(r):
+            st = stub_of(r); dec = lambda x: ((x >> 4) & 0xf000) | (x & 0xfff)
+            return (dec(wd(r, st + 16)) << 16) | dec(wd(r, st + 12))
+        ctx = ctx_of(b)
+        diff = [i for i in range(min(len(a), len(b))) if a[i] != b[i]]
+        outside = [hex(base + i) for i in diff if base + i < ctx and not 0x53938E2C <= base + i < 0x53938E30]
+        tail = hex(base + diff[-1]) if diff else None
+        print(f'4. image vs {prev.split("/")[-2]}: lengths {len(a)} / {len(b)}; {len(diff)} bytes differ; outside the call word and the appended module area: {len(outside)}; '
+              f'ctx {ctx_of(a):#x} -> {ctx:#x}, stub {stub_of(a):#x} -> {stub_of(b):#x}, last differing byte {tail}')
+        if outside or len(a) != len(b): bad.append(('image differs elsewhere', outside[:5]))
     for b_ in bad[:10]: print('MISMATCH', b_)
     print('RESULT', 'FAIL' if bad else 'all passed')
     sys.exit(1 if bad else 0)

@@ -15,6 +15,11 @@
  * the first call and then on every fourth (live view calls it on every frame; a full estimate is about 2.2 M
  * instructions), the calls in between repeat the last result; leaving plain Auto forgets it.
  *
+ * Temporal filter (FFCC's): each computing call's estimate is an observation whose variance comes from the spread of the
+ * softmax marginals; a Kalman filter per axis (parameters in the KF table, nothing to change in the code) smooths the
+ * estimate over the computing calls, so live view does not jump and consecutive shots agree; a confident frame far from the
+ * state restarts it (scene change). Plain-Auto-only: leaving it clears the state.
+ *
  * Layout: the context, the module and the stub are appended (as the other modules), then the 79 KB of tables
  * (`awbml-data.ts`); build.ts installs this after every other addition, so they all keep the places they have
  * without it (the image then differs from one without it only in the call word and the appended bytes). The module's scratch buffer (35 KB, `operator new`, called once) is kept in the RAM word
@@ -40,8 +45,8 @@ export const AWBML_SLOT = 0x558372dc;
 /** Literal: end of the start-up zero fill. 44 unused bytes up to the heap (0x55837300) follow it. */
 const ZERO_FILL_END = 0x53000460;
 
-/** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot. */
-const TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL'] as const;
+/** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot; the period follows them. */
+const TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL', 'KF', 'LN'] as const;
 
 function fail(code: string, message: string): never {
   throw new FirmwareError(code, message);

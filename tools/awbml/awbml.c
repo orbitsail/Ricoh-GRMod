@@ -20,6 +20,10 @@
  * reference and builds the tables (layout there); stack use is a few hundred bytes, the scratch buffer is
  * allocated once (AWBML_SCRATCH_BYTES).
  *
+ * Temporal filter (FFCC): the calibrated estimate is an observation with a variance from the spread of the softmax
+ * marginals; a Kalman filter per axis (parameters in the KF table) smooths it over the computing calls and restarts when a
+ * confident frame disagrees with the state.
+ *
  * Throttling: the AWB runs on every live-view frame, so only the first call and then every `ctx->period`-th call
  * compute; the calls in between repeat the last result (or, if the last computation fell back, write nothing). A call
  * with the mode byte not 0 forgets the result, so the next plain-Auto call computes.
@@ -50,6 +54,8 @@ struct awbml_ctx {
   const u32 *gexp;              /* [2][AWBML_NG] */
   const u32 *recip;             /* [9] */
   const i32 *cal;               /* [10] */
+  const u32 *kf;                /* [8] Kalman filter parameters */
+  const u32 *ln;                /* [257] */
   u32 period;                   /* compute on every period-th call (1: always) */
 };
 
@@ -65,6 +71,10 @@ struct scratch {
   u32 crg[66], cbc[66];            /* column sums of those (the lanes cannot overflow: 9 * 3949 < 65536) */
   /* throttling state: the result of the last full computation */
   u32 valid, left, fb, g0, g3;
+  /* temporal filter: state valid, mean (Q16 log units) and variance (Q32) per axis */
+  u32 have;
+  i32 mu[2];
+  u32 sg[2];
 };
 
 struct stats {
@@ -208,15 +218,47 @@ static u32 atan2_turn(i64 x, i64 y, const u32 *at) {
   return z;
 }
 
-static u32 circ_mean(const u32 *p, const i32 *tw, const u32 *at) {
+/* ln(v) in Q24, v >= 1: v reduced to 32 bits, table of 256 steps with linear interpolation */
+static i32 lnq(const struct awbml_ctx *k, u64 v) {
+  u32 sh = 0, w, c, m, f, rest;
+  i32 a, b;
+  while (v >> 32) { v >>= 1; sh++; }
+  w = (u32)v;
+  c = (u32)__builtin_clz(w);
+  m = w << c;
+  f = (m >> 23) & 255; rest = (m >> 15) & 255;
+  a = (i32)k->ln[f]; b = (i32)k->ln[f + 1];
+  return (i32)(31 - c + sh) * AWBML_LN2Q + a + (((b - a) * (i32)rest) >> 8);
+}
+
+/* Variance of one axis (log units^2, Q32) from the resultant (x, y) of its marginal (mass M): sigma^2 = -2 ln(rho)
+ * radians^2, rho = |resultant| / (M 2^30), converted to log units and clamped to [R_min, R_max]. */
+static u32 axis_variance(const struct awbml_ctx *k, u64 mass, i64 x, i64 y) {
+  u32 s = 0;
+  u64 s2, r;
+  i64 d;
+  while (x >= (1 << 29) || x <= -(1 << 29) || y >= (1 << 29) || y <= -(1 << 29)) { x >>= 1; y >>= 1; s++; }
+  s2 = (u64)(x * x) + (u64)(y * y);
+  if (!s2 || !mass) return k->kf[1];
+  d = (i64)lnq(k, mass * mass) + 60 * (i64)AWBML_LN2Q - lnq(k, s2) - 2 * (i64)s * AWBML_LN2Q;
+  r = d > 0 ? ((u64)d * AWBML_VARC) >> 8 : 0;
+  if (r < k->kf[0]) r = k->kf[0];
+  if (r > k->kf[1]) r = k->kf[1];
+  return (u32)r;
+}
+
+static u32 circ_mean(const struct awbml_ctx *k, const u32 *p, u32 *var) {
   i64 x = 0, y = 0;
+  u64 mass = 0;
   u32 i;
   for (i = 0; i < 64; i++) {
     i64 q = (i64)(p[i] >> 6);
-    x += q * tw[i];
-    y += q * tw[64 + i];
+    mass += (u64)q;
+    x += q * k->tw[i];
+    y += q * k->tw[64 + i];
   }
-  return atan2_turn(x, y, at) >> 10;
+  *var = axis_variance(k, mass, x, y);
+  return atan2_turn(x, y, k->atan) >> 10;
 }
 
 static u32 exp_gain(const struct awbml_ctx *k, u32 which, i32 x) {
@@ -355,7 +397,7 @@ STAGE void convolve(const struct awbml_ctx *ctx, struct scratch *sc) {
 }
 
 /* score = convolution + bias (scene-brightness dependent); softmax marginals; circular means. Returns u, v (Q16). */
-STAGE void scores(const struct awbml_ctx *ctx, struct scratch *sc, i32 v24, i32 e30, i32 *pu_, i32 *pv_) {
+STAGE void scores(const struct awbml_ctx *ctx, struct scratch *sc, i32 v24, i32 e30, i32 *pu_, i32 *pv_, u32 *ru, u32 *rv) {
   i32 e, tq, smax = -0x7fffffff - 1, ou, ov;
   u32 i, h;
   if (v24 == -0x880) {
@@ -388,8 +430,8 @@ STAGE void scores(const struct awbml_ctx *ctx, struct scratch *sc, i32 v24, i32 
       }
     }
   }
-  ou = (i32)circ_mean(sc->pu, ctx->tw, ctx->atan);
-  ov = (i32)circ_mean(sc->pv, ctx->tw, ctx->atan);
+  ou = (i32)circ_mean(ctx, sc->pu, ru);
+  ov = (i32)circ_mean(ctx, sc->pv, rv);
   *pu_ = AWBML_U0Q + ((ou + 32768 + 16) >> 5);
   *pv_ = AWBML_V0Q + ((ov + 32768 + 16) >> 5);
 }
@@ -406,15 +448,53 @@ static void calibrate(const i32 *cal, i32 *pu, i32 *pv) {
   *pv = *pv + cal[3] + (i32)((s * cal[7] + 32768) >> 16);
 }
 
+/* floor(n * 65536 / d) for n < d, by shift and subtract */
+static u32 divq16(u32 n, u32 d) {
+  u64 r = n;
+  u32 q = 0;
+  int i;
+  for (i = 0; i < 16; i++) {
+    r <<= 1; q <<= 1;
+    if (r >= d) { r -= d; q |= 1; }
+  }
+  return q;
+}
+
+/* Temporal filter over the illuminant (Kalman, per axis): observation z with variance r; the output is sc->mu. */
+static void kalman(struct scratch *sc, const u32 *kf, const i32 *z, const u32 *r) {
+  int a, reset = 0;
+  if (!sc->have) {
+    sc->have = 1;
+    for (a = 0; a < 2; a++) { sc->mu[a] = z[a]; sc->sg[a] = r[a]; }
+    return;
+  }
+  for (a = 0; a < 2; a++) sc->sg[a] += kf[2];
+  if (r[0] < kf[3] && r[1] < kf[3]) {              /* a confident frame far from the state: the scene changed */
+    for (a = 0; a < 2; a++) {
+      i64 d = (i64)z[a] - sc->mu[a];
+      if ((u64)(d * d) > (u64)kf[4] * ((u64)sc->sg[a] + r[a])) reset = 1;
+    }
+  }
+  for (a = 0; a < 2; a++) {
+    if (reset) { sc->mu[a] = z[a]; sc->sg[a] = r[a]; }
+    else {
+      u32 k = divq16(sc->sg[a], sc->sg[a] + r[a]);
+      sc->mu[a] += (i32)((((i64)k * ((i64)z[a] - sc->mu[a])) + 32768) >> 16);
+      sc->sg[a] -= (u32)((((u64)k * sc->sg[a]) + 32768) >> 16);
+    }
+  }
+}
+
 /* Entry (first function in .text). */
 void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char *S) {
   struct stats st;
   struct scratch *sc;
   u32 w, h, stride, x0, y0, t1, t2, fresh = 0;
-  i32 v24, e30, pu, pv;
+  i32 v24, e30, pu, pv, z[2];
+  u32 rr[2];
   if (ctx->magic != AWBML_MAGIC || !ctx->alloc || !ctx->slot) return;
   if (obj[0xAF88] != 0) {                         /* not plain Auto: forget the last result */
-    if (*ctx->slot) ((struct scratch *)*ctx->slot)->valid = 0;
+    if (*ctx->slot) { ((struct scratch *)*ctx->slot)->valid = 0; ((struct scratch *)*ctx->slot)->have = 0; }
     return;
   }
   stride = rd16(S + 0x14); x0 = rd16(S + 0x1c); y0 = rd16(S + 0x1e); w = rd16(S + 0x20); h = rd16(S + 0x22);
@@ -424,7 +504,7 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   if (!*ctx->slot) { *ctx->slot = ctx->alloc(AWBML_SCRATCH_BYTES); fresh = 1; }
   if (!*ctx->slot) return;
   sc = (struct scratch *)*ctx->slot;
-  if (fresh) sc->valid = 0;
+  if (fresh) { sc->valid = 0; sc->have = 0; }
   if (sc->valid && sc->left) {                    /* between two computations: repeat the last result */
     sc->left--;
     if (!sc->fb) { wr16(obj + 4, sc->g0); wr16(obj + 0xA, sc->g3); }
@@ -438,9 +518,11 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   normalise(sc->rowflag, 1, sc->re, t1);
   normalise(sc->rowflag, 2, sc->im, t2);
   convolve(ctx, sc);
-  scores(ctx, sc, v24, e30, &pu, &pv);
+  scores(ctx, sc, v24, e30, &pu, &pv, &rr[0], &rr[1]);
   calibrate(ctx->cal, &pu, &pv);
-  sc->g0 = exp_gain(ctx, 0, pu); sc->g3 = exp_gain(ctx, 1, pv); sc->fb = 0;
+  z[0] = pu; z[1] = pv;
+  kalman(sc, ctx->kf, z, rr);
+  sc->g0 = exp_gain(ctx, 0, sc->mu[0]); sc->g3 = exp_gain(ctx, 1, sc->mu[1]); sc->fb = 0;
   wr16(obj + 4, sc->g0);
   wr16(obj + 0xA, sc->g3);
 }

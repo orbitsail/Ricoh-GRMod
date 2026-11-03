@@ -17,6 +17,9 @@ are written to core/src/fw/aspect/awbml-data.ts by gen.py):
   TANH   i16[NTANH]       tanh(2e), e = (e30 - 1024)/1024, at e30 = E30_LO + 16 j, Q12
   GEXP   u32[2][NG]       16 * 8192 * K * exp(j/16 - 1), K = 0.6313*0.920 (R) and 0.3313*0.974 (B)
   RECIP  u32[9]           ceil(2^24 / (2 n)), n = 1..8: round(a / n) = ((2a + n) * RECIP[n]) >> 24
+  KF     u32[8]           Kalman filter (variances in log units^2, Q32): R_min, R_max, Q (per computing call), R_conf
+                          (a frame is confident below it), gate (scene change when (z - mu)^2 > gate * (Sigma + R)), 0, 0, 0
+  LN     u32[257]         round(2^24 ln(1 + i/256))
   CAL    i32[10]          calibration: Pd_u, Pd_v, Dd_u, Dd_v, dU, dV (= Pt - Pd), DDu, DDv (= Dt - Dd), INV (u32 =
                           floor(2^48 / (dU^2 + dV^2))), 0   (all Q16 log units)
 """
@@ -42,13 +45,17 @@ NEXPA, NG = 272, 81
 U0Q, V0Q = 0, -13107          # window corner in Q16 log units
 V_OFFSET = 419430             # round(0.2 * 32 * 65536)
 KR, KB = 0.6313 * 0.920, 0.3313 * 0.974
+# Kalman filter parameters (log units; variances are squares), tunable through the KF table without code changes
+KF_RMIN, KF_RMAX, KF_Q, KF_RCONF, KF_GATE = 0.004 ** 2, 0.2 ** 2, 0.015 ** 2, 0.03 ** 2, 9
+LN2Q = 11629080               # round(2^24 ln 2)
+VARC = 6640                   # round(2^16 ((64 / 2 pi) / 32)^2): radians^2 of the circular spread -> log units^2
 MAGIC = 0x4d425741            # 'AWBM'
 MAXCNT = 0xFFFF
 PERIOD = 4                    # build value of ctx->period
-SCRATCH_BYTES = 4096 * 4 * 2 + 64 * 4 * 2 + 2 * 3 * 64 * 4 + 2 * 66 * 4 + 5 * 4 + 64   # struct scratch in awbml.c
-TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL']
+SCRATCH_BYTES = 4096 * 4 * 2 + 64 * 4 * 2 + 2 * 3 * 64 * 4 + 2 * 66 * 4 + 5 * 4 + 64 + 5 * 4   # struct scratch in awbml.c
+TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL', 'KF', 'LN']
 DTYPES = dict(LOG='<i4', BIAS='<i2', FSPEC='<i4', TW='<i4', ATAN='<u4', EXPA='<u4', EXPB='<u4', TANH='<i2', GEXP='<u4',
-              RECIP='<u4', CAL='<i4')
+              RECIP='<u4', CAL='<i4', KF='<u4', LN='<u4')
 
 
 def rnd(x):
@@ -104,6 +111,8 @@ def build_tables(cal=None, params=None):
         a = np.arange(0, 2 * 8 * 0xF6D + 1)
         assert np.array_equal(((2 * a + n) * int(t['RECIP'][n])) >> 24, (2 * a + n) // (2 * n))
     c = cal
+    t['KF'] = np.array([rnd(KF_RMIN * 2 ** 32), rnd(KF_RMAX * 2 ** 32), rnd(KF_Q * 2 ** 32), rnd(KF_RCONF * 2 ** 32), KF_GATE, 0, 0, 0])
+    t['LN'] = np.array([rnd(2 ** 24 * math.log(1 + i / 256)) for i in range(257)])
     t['CAL'] = np.array(list(c['Pd']) + list(c['Dd']) + list(c['dP']) + list(c['dD']) + [c['inv'], 0])
     blob = bytearray()
     offs = {}
@@ -289,8 +298,36 @@ def atan2_turn(x, y, T):
     return z & 0xFFFFFFFF
 
 
-def estimate_uv(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, want_debug=False):
-    """Uncalibrated estimate (u, v) in Q16 log units, or None (fallback)."""
+def lnq(T, v):
+    """ln(v) in Q24 for an integer v >= 1 (as the C code: v reduced to 32 bits, 8-bit table with linear interpolation)."""
+    sh = 0
+    while v >> 32:
+        v >>= 1; sh += 1
+    n = v.bit_length() - 1
+    m = (v << (31 - n)) & 0xFFFFFFFF
+    f, rest = (m >> 23) & 255, (m >> 15) & 255
+    ln = T['LN']
+    return (n + sh) * LN2Q + int(ln[f]) + (((int(ln[f + 1]) - int(ln[f])) * rest) >> 8)
+
+
+def axis_variance(T, M, sx, sy):
+    """Variance (log units^2, Q32) of one axis from the resultant (sx, sy) of its marginal and the marginal's mass M:
+    sigma^2 = -2 ln(rho) radians^2, rho = |resultant| / (M 2^30), in log units, clamped to [R_min, R_max]."""
+    kf = [int(x) for x in T['KF']]
+    s = 0
+    xn, yn = sx, sy
+    while max(abs(xn), abs(yn)) >= (1 << 29):
+        xn >>= 1; yn >>= 1; s += 1
+    s2 = xn * xn + yn * yn
+    if s2 == 0 or M == 0:
+        return kf[1]
+    d = lnq(T, M * M) + 60 * LN2Q - lnq(T, s2) - 2 * s * LN2Q
+    r = ((d * VARC) >> 8) if d > 0 else 0
+    return min(max(r, kf[0]), kf[1])
+
+
+def estimate_uv(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, want_debug=False, want_var=False):
+    """Uncalibrated estimate (u, v) in Q16 log units, or None (fallback); with want_var (u, v, R_u, R_v)."""
     r, g, b, c = grid_arrays(R, Gr, Gb, B, cnt, x0, y0, w, h, stride)
     h1, h2, t1, t2, csum = histograms(T, r, g, b, c)
     if csum * 20 < w * h * 1584:
@@ -312,15 +349,19 @@ def estimate_uv(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, want_debug
     pu = wm.sum(1); pv = wm.sum(0)
     TW = T['TW']
     out = []
+    var = []
     for p in (pu, pv):
         q = p >> 6
         sx = int((q * TW[0]).sum()); sy = int((q * TW[1]).sum())
         z = atan2_turn(sx, sy, T)
         out.append(z >> 10)
+        var.append(axis_variance(T, int(q.sum()), sx, sy))
     u = U0Q + ((out[0] + 32768 + 16) >> 5)
     v = V0Q + ((out[1] + 32768 + 16) >> 5)
     if want_debug:
-        return (u, v), dict(hn1=hn1, hn2=hn2, sc=s, wgt=wgt)
+        return (u, v), dict(hn1=hn1, hn2=hn2, sc=s, wgt=wgt, var=var)
+    if want_var:
+        return u, v, var[0], var[1]
     return u, v
 
 
@@ -345,6 +386,39 @@ def exp_gain(T, which, x):
     p = 65536 + r + ((r * r) >> 17) + ((((r * r) >> 16) * r >> 16) * 10923 >> 16)
     g = (int(T['GEXP'][which][idx]) * p + (1 << 19)) >> 20
     return min(max(g, 1024), 65535)
+
+
+def kalman(T, state, z, r):
+    """One computing call's observation z = (u', v') (Q16) with variances r (Q32). state: None or dict(mu, sg); returns the
+    new state (the filter output is its mu). Mirrors kalman() in awbml.c."""
+    kf = [int(x) for x in T['KF']]
+    if state is None:
+        return dict(mu=list(z), sg=list(r))
+    mu, sg = list(state['mu']), [x + kf[2] for x in state['sg']]
+    if r[0] < kf[3] and r[1] < kf[3]:
+        for a in range(2):
+            d = z[a] - mu[a]
+            if d * d > kf[4] * (sg[a] + r[a]):
+                return dict(mu=list(z), sg=list(r))
+    for a in range(2):
+        den = sg[a] + r[a]
+        k = (sg[a] << 16) // den                      # the C code: 16 shift-subtract steps
+        mu[a] += (k * (z[a] - mu[a]) + 32768) >> 16
+        sg[a] -= (k * sg[a] + 32768) >> 16
+    return dict(mu=mu, sg=sg)
+
+
+def observe(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode):
+    """(u', v', R_u, R_v): the calibrated estimate and its variances, or None (the camera's own result stays)."""
+    if mode != 0 or not (1 <= w <= 64 and 1 <= h <= 64):
+        return None
+    if (y0 + h - 1) * stride + x0 + w > (1 << 24):
+        return None
+    o = estimate_uv(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, want_var=True)
+    if o is None:
+        return None
+    u, v = calibrate(T, o[0], o[1])
+    return u, v, o[2], o[3]
 
 
 def awbml_ref(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, calibrated=True):
@@ -378,7 +452,9 @@ def const_header():
         f'#define AWBML_U0Q ({U0Q})\n'
         f'#define AWBML_V0Q ({V0Q})\n'
         f'#define AWBML_V_OFFSET {V_OFFSET}\n'
-        f'#define AWBML_PSHIFT {PSHIFT}\n')
+        f'#define AWBML_PSHIFT {PSHIFT}\n'
+        f'#define AWBML_LN2Q {LN2Q}\n'
+        f'#define AWBML_VARC {VARC}u\n')
 
 
 class AwbmlSeq:
@@ -388,6 +464,8 @@ class AwbmlSeq:
     usable grid; the calls between repeat the cached (g0, g3) or, if the computation fell back, return None; a call with
     mode != 0 forgets the cache (if the buffer exists). alloc_ok=False models a failing operator new."""
 
+    counts = dict.fromkeys(['observations', 'first', 'scene resets', 'R clamped at R_max (either axis)', 'confident (both axes below R_conf)'], 0)
+
     def __init__(self, T, period=PERIOD):
         self.T, self.period = T, period
         self.buf = False
@@ -396,11 +474,13 @@ class AwbmlSeq:
         self.fb = True
         self.g = None
         self.allocs = 0
+        self.state = None
 
     def call(self, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, alloc_ok=True):
         if mode != 0:
             if self.buf:
                 self.valid = False
+                self.state = None
             return None
         if not (1 <= w <= 64 and 1 <= h <= 64) or (y0 + h - 1) * stride + x0 + w > (1 << 24):
             return None
@@ -408,12 +488,20 @@ class AwbmlSeq:
             self.allocs += 1
             if not alloc_ok:
                 return None
-            self.buf, self.valid = True, False
+            self.buf, self.valid, self.state = True, False, None
         if self.valid and self.left:
             self.left -= 1
             return None if self.fb else self.g
         self.valid, self.fb, self.left = True, True, self.period - 1 if self.period > 1 else 0
-        r = awbml_ref(self.T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode)
-        if r is not None:
-            self.fb, self.g = False, r
-        return r
+        o = observe(self.T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode)
+        if o is None:
+            return None
+        prev = self.state
+        self.state = kalman(self.T, self.state, o[:2], o[2:])
+        AwbmlSeq.counts['observations'] += 1
+        AwbmlSeq.counts['first'] += prev is None
+        AwbmlSeq.counts['scene resets'] += prev is not None and self.state['mu'] == list(o[:2]) and self.state['sg'] == list(o[2:])
+        AwbmlSeq.counts['R clamped at R_max (either axis)'] += max(o[2:]) >= int(self.T['KF'][1])
+        AwbmlSeq.counts['confident (both axes below R_conf)'] += max(o[2:]) < int(self.T['KF'][3])
+        self.fb, self.g = False, (exp_gain(self.T, 0, self.state['mu'][0]), exp_gain(self.T, 1, self.state['mu'][1]))
+        return self.g

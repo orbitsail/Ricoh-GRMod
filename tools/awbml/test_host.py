@@ -64,7 +64,7 @@ def pack_case(R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, rng):
 class Runner:
     def __init__(self, lib, blob, offs):
         self.lib, self.blob = lib, blob
-        self.offs = (ctypes.c_uint * 11)(*[offs[n] for n in ref.TABLE_ORDER])
+        self.offs = (ctypes.c_uint * len(ref.TABLE_ORDER))(*[offs[n] for n in ref.TABLE_ORDER])
         self.first = True
 
     def run(self, mem, s_off, obj, fail_alloc=0, period=1, reset=None):
@@ -77,6 +77,14 @@ class Runner:
         changed = [i for i in range(OBJ_SIZE) if o[i] != obj[i]]
         assert set(changed) <= {4, 5, 0xA, 0xB}, changed
         return (struct.unpack_from('<H', o, 4)[0], struct.unpack_from('<H', o, 0xA)[0]), na
+
+
+def with_kf(tab, blob, offs, rmin=0.004, rmax=0.2, q=0.015, rconf=0.03, gate=9):
+    """The reference tables and blob with other filter parameters (the KF table)."""
+    kf = [round(rmin ** 2 * 2 ** 32), round(rmax ** 2 * 2 ** 32), round(q ** 2 * 2 ** 32), round(rconf ** 2 * 2 ** 32), gate, 0, 0, 0]
+    tab2 = dict(tab); tab2['KF'] = np.array(kf, dtype=np.int64)
+    b = bytearray(blob); b[offs['KF']:offs['KF'] + 32] = np.array(kf, dtype='<u4').tobytes()
+    return tab2, bytes(b)
 
 
 def gen_random(rng):
@@ -142,7 +150,7 @@ def main():
             want = None if fail_alloc else ref.awbml_ref(tab, *[x.astype(np.int64) for x in a], p['x0'], p['y0'], p['w'], p['h'], p['stride'],
                                                          p['v24'], p['e30'], p['mode'])
             for name, r in runners.items():
-                got, na = r.run(mem, s_off, obj, int(fail_alloc))
+                got, na = r.run(mem, s_off, obj, int(fail_alloc), reset=1)   # a fresh scratch: the filter starts from this observation
                 if fail_alloc:
                     assert na == 1, na            # tried once, got nothing, left obj alone
                 if got != want:
@@ -175,34 +183,46 @@ def main():
         for i in range(NCASE_RANDOM):
             arrs, p = gen_random(rng)
             check('random', arrs, p)
-        # sequences with the build's period (4): mixed scenes and modes against the state machine of ref.AwbmlSeq
+        # sequences with the build's period (4) and others: mixed scenes and modes against the state machine of ref.AwbmlSeq,
+        # with the build's filter parameters and with other parameter sets in the KF table (the reset path needs a larger R_conf)
         pool = [scenes.scene_args(cube[i]['s'], cube[i]['ev']) for i in rng.integers(0, len(cube), 40)]
-        for sq in range(NSEQ):
-            seq = ref.AwbmlSeq(tab, ref.PERIOD)
-            ok_calls = 0
-            for step in range(int(rng.integers(8, 30))):
-                if rng.random() < 0.6:
-                    a = pool[int(rng.integers(0, len(pool)))]
-                    arrs = [a[k] for k in ('R', 'Gr', 'Gb', 'B', 'cnt')]
-                    p = {k: a[k] for k in ('x0', 'y0', 'w', 'h', 'stride', 'v24', 'e30', 'mode')}
-                else:
-                    arrs, p = gen_random(rng)
-                p['mode'] = int(rng.choice([0] * 6 + [1, 2]))
-                fail = step < 2 and rng.random() < 0.2 and not seq.buf
-                mem, s_off, obj, a_ = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng)
-                want = seq.call(*[x.astype(np.int64) for x in a_], p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], alloc_ok=not fail)
-                for name, r in runners.items():
-                    if name not in seq_state:
-                        seq_state[name] = None
-                    got, na = r.run(mem, s_off, obj, int(fail), period=ref.PERIOD, reset=int(step == 0))
-                    if got != want:
-                        print(f'SEQ MISMATCH seq {sq} step {step} lib={name} C={got} ref={want} {p}')
-                        stats['bad'] = stats.get('bad', 0) + 1
-                        break
-                stats.setdefault('sequence-calls', [0, 0])
-                stats['sequence-calls'][0] += 1
-                stats['sequence-calls'][1] += want is None
+        def sequences(tab_x, runners_x, n, tag):
+            for sq in range(n):
+                period = int(rng.choice([ref.PERIOD] * 4 + [1, 2]))
+                seq = ref.AwbmlSeq(tab_x, period)
+                ok_calls = 0
+                last = None
+                for step in range(int(rng.integers(10, 40))):
+                    if last is not None and rng.random() < 0.55:
+                        arrs, p = last[0], dict(last[1])          # the same scene again: the filter converges
+                    elif rng.random() < 0.6:
+                        a = pool[int(rng.integers(0, len(pool)))]
+                        arrs = [a[k] for k in ('R', 'Gr', 'Gb', 'B', 'cnt')]
+                        p = {k: a[k] for k in ('x0', 'y0', 'w', 'h', 'stride', 'v24', 'e30', 'mode')}
+                    else:
+                        arrs, p = gen_random(rng)
+                    last = (arrs, dict(p))
+                    p['mode'] = int(rng.choice([0] * 9 + [1, 2]))
+                    fail = step < 2 and rng.random() < 0.2 and not seq.buf
+                    mem, s_off, obj, a_ = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng)
+                    want = seq.call(*[x.astype(np.int64) for x in a_], p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], alloc_ok=not fail)
+                    for name, r in runners_x.items():
+                        got, na = r.run(mem, s_off, obj, int(fail), period=period, reset=int(step == 0))
+                        if got != want:
+                            print(f'SEQ MISMATCH seq {sq} step {step} lib={name} C={got} ref={want} {p}')
+                            stats['bad'] = stats.get('bad', 0) + 1
+                            break
+                    stats.setdefault(tag, [0, 0])
+                    stats[tag][0] += 1
+                    stats[tag][1] += want is None
+
+        sequences(tab, runners, NSEQ, 'sequence-calls')
+        for k, kf in enumerate([dict(rconf=0.13), dict(rmin=0.02, rmax=0.12, q=0.005, rconf=0.15, gate=4), dict(rmin=0.001, rmax=0.3, q=0.03, rconf=0.09, gate=16)]):
+            tab2, blob2 = with_kf(tab, blob, offs, **kf)
+            runners2 = {nm: Runner(rn.lib, blob2, offs) for nm, rn in runners.items()}
+            sequences(tab2, runners2, NSEQ // 2, f'sequence-calls KF set {k + 1}')
         print('all done', round(time.time() - t0, 1), 's')
+    print('filter coverage in the sequences:', ref.AwbmlSeq.counts)
     bad = stats.pop('bad', 0)
     for k, (n, fb) in stats.items():
         print(f'{k:16s} cases {n:5d}  fallback (None) {fb:5d}')

@@ -37,6 +37,7 @@ int host_run(const unsigned char *mem, unsigned memlen, unsigned s_off, const un
   c.tw = (const i32 *)(bl + offs[3]); c.atan = (const u32 *)(bl + offs[4]); c.expa = (const u32 *)(bl + offs[5]);
   c.expb = (const u32 *)(bl + offs[6]); c.tanh = (const i16 *)(bl + offs[7]); c.gexp = (const u32 *)(bl + offs[8]);
   c.recip = (const u32 *)(bl + offs[9]); c.cal = (const i32 *)(bl + offs[10]);
+  c.kf = (const u32 *)(bl + offs[11]); c.ln = (const u32 *)(bl + offs[12]);
   c.period = period;
   awbml_host_base = m;
   awbml(&c, obj, m + s_off);

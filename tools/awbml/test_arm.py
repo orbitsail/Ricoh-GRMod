@@ -80,6 +80,38 @@ def main(n_scenes=40, n_random=80):
         else:
             ok += 1; fb += want is None
     print(f'ARM (unicorn) vs ref: {ok + bad} cases, {bad} mismatches, {fb} fallbacks')
+    # sequences with the build's period and the temporal filter: the scratch buffer stays, ref.AwbmlSeq is the model
+    uc.mem_write(CTX + 4 * (len(ctx) - 1), struct.pack('<I', ref.PERIOD))
+    sbad = scalls = 0
+    pool = [c for c in cases[:n_scenes + 6]]
+    for q in range(6):
+        seq = ref.AwbmlSeq(tab, ref.PERIOD)
+        uc.mem_write(CTX + 0x100, b'\0\0\0\0')
+        last = None
+        for step in range(40):
+            if last is not None and rng.random() < 0.55:
+                arrs, p = last[0], dict(last[1])
+            else:
+                arrs, p = pool[int(rng.integers(0, len(pool)))]
+                if not isinstance(arrs, list): arrs = list(arrs)
+            last = (arrs, dict(p))
+            p['mode'] = int(rng.choice([0] * 9 + [1, 2]))
+            mem, s_off, obj, a = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng)
+            mem = bytearray(mem)
+            for k in range(5):
+                struct.pack_into('<I', mem, s_off + 4 * k, MEM + struct.unpack_from('<I', mem, s_off + 4 * k)[0])
+            uc.mem_write(MEM, bytes(mem)); uc.mem_write(OBJ, obj)
+            uc.reg_write(UC_ARM_REG_R0, CTX); uc.reg_write(UC_ARM_REG_R1, OBJ); uc.reg_write(UC_ARM_REG_R2, MEM + s_off)
+            uc.reg_write(UC_ARM_REG_SP, STACK + 0x10000); uc.reg_write(UC_ARM_REG_LR, STUB + 8)
+            uc.emu_start(CODE, STUB + 8)
+            o = bytes(uc.mem_read(OBJ, OBJ_SIZE))
+            got = None if o == obj else (struct.unpack_from('<H', o, 4)[0], struct.unpack_from('<H', o, 0xA)[0])
+            want = seq.call(*[x.astype(np.int64) for x in a], p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'])
+            scalls += 1
+            if got != want:
+                sbad += 1; print('SEQ MISMATCH', got, want)
+    print(f'ARM (unicorn) sequences (period {ref.PERIOD}, temporal filter): {scalls} calls, {sbad} mismatches')
+    bad += sbad
     sys.exit(1 if bad else 0)
 
 
