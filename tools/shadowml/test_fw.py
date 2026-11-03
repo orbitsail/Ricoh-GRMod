@@ -177,7 +177,7 @@ def main():
 
     # ---------------------------------------------------------------- 1. Auto: stills, live view, movie; one hooked emulator, one fed base emulator per model
     hooked = Core(PRE)
-    model_default = bytes(hooked.mu.mem_read(struct.unpack('<I', bytes(hooked.mu.mem_read(hooked.ctx + 4, 4)))[0], 68))
+    model_default = bytes(hooked.mu.mem_read(struct.unpack('<I', bytes(hooked.mu.mem_read(hooked.ctx + 4, 4)))[0], struct.unpack('<I', bytes(hooked.mu.mem_read(hooked.ctx + 8, 4)))[0]))
     assert ref.parse_blob(model_default) is not None, 'the image carries a valid model'
     models = [model_default, ref.constant_blob(0), ref.constant_blob(0x800), ref.constant_blob(300), ref.constant_blob(-1)] + [TH.rand_blob(rnd, pool) for _ in range(10)]
     fed = {id(m): None for m in models}

@@ -1,3 +1,4 @@
+import os
 # SPDX-License-Identifier: GPL-2.0-only
 """Runs the real ARM module (as gen.py builds it, linked at 0x10000000) in the unicorn CPU emulator against ref.py: the DNG planes,
 random scenes, edge cases and random / corrupted model blobs, with garbage in the stack. Checks the registers r4-r11 and sp, that
@@ -77,7 +78,7 @@ def main(n_random=1500):
     rng = np.random.default_rng(21)
     dngs = TH.dng_scenes()
     pool = TH.thr_pool(rng)
-    models = [ref.placeholder_blob(), ref.constant_blob(300), ref.constant_blob(-1)] + [TH.rand_blob(rnd, pool) for _ in range(10)]
+    models = [(open(os.environ['SHADOWML_MODEL'],'rb').read() if os.environ.get('SHADOWML_MODEL') else ref.placeholder_blob()), ref.constant_blob(300), ref.constant_blob(-1)] + [TH.rand_blob(rnd, pool) for _ in range(10)]
     n = bad = regbad = wbad = 0
     cost = {}
     deepest = 0
