@@ -274,6 +274,8 @@ export interface BuildOptions {
   brightAuto?: boolean | 'bright' | 'balanced';
   /** The plain Auto white balance this share of the way to White Priority under warm indoor light (`aspect/awbblend.ts`). */
   awbBlend?: number;
+  /** The plain Auto white balance with tables fitted against lamps / bright areas in the frame (`aspect/awbfit.ts`). */
+  awbFit?: boolean;
 }
 
 export interface ShutdownImage {
@@ -988,6 +990,7 @@ export class Engine {
       ...(options && options.cpuLut && options.cpuLut.length ? { cpuLut: options.cpuLut } : {}),
       ...(options && options.brightAuto ? { brightAuto: options.brightAuto } : {}),
       ...(options && options.awbBlend ? { awbBlend: options.awbBlend } : {}),
+      ...(options && options.awbFit ? { awbFit: true } : {}),
     };
     const { decoded: _decoded, ...rest } = await buildFirmware(this.raw, edits, ratios, clarity, features, test);
     return rest;

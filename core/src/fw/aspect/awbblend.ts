@@ -84,12 +84,8 @@ function writeTable(p: Patch, address: number, bytes: Uint8Array, reason: string
   }
 }
 
-/**
- * The plain Auto `share` of the way to White Priority (0 < share < 1; 0.5 is half way), for the
- * warm indoor light where the two differ.
- */
-export function installAwbBlend(p: Patch, share = 0.5): void {
-  if (!(share > 0 && share < 1)) throw new FirmwareError('internal', 'auto WB blend: share must be between 0 and 1');
+/** The official tables and getters this aspect relies on are where 1.11 has them. */
+function checkLayout(p: Patch): void {
   expectWord(p, STD_VT_T2, GET_T2);
   expectWord(p, ATM_VT_T2, GET_T2);
   expectWord(p, STD_VT_T4, GET_T4);
@@ -100,11 +96,40 @@ export function installAwbBlend(p: Patch, share = 0.5): void {
   official(GET_T2, STD_T2);
   official(GET_T4, STD_T4);
   official(GET_T5, STD_T5);
+}
+
+/**
+ * Plain Auto's three tables replaced: `t2` the weights, `t4` and `t5` the two corrections, each 24 rows
+ * x 33 columns in the firmware's order (`table[row * 33 + column]`). White and Warmth Priority keep theirs.
+ */
+export function installAwbTables(p: Patch, t2: Uint8Array, t4: Uint8Array, t5: Uint8Array, why: string): void {
+  if (t2.length !== BYTES || t4.length !== BYTES || t5.length !== BYTES) throw new FirmwareError('internal', `auto WB tables: each must be ${BYTES} bytes`);
+  checkLayout(p);
   // Standard's own tables, in place.
-  writeTable(p, STD_T4, blend(p, STD_T4, WHITE_T4, share), 'auto WB: plain Auto towards White Priority (table 2 of 3)');
-  writeTable(p, STD_T5, blend(p, STD_T5, WHITE_T5, share), 'auto WB: plain Auto towards White Priority (table 3 of 3)');
+  writeTable(p, STD_T4, t4, `${why} (table 2 of 3)`);
+  writeTable(p, STD_T5, t5, `${why} (table 3 of 3)`);
   // The table it shares with Warmth Priority: a copy for Standard, read by a copy of the getter.
-  const table = p.append(blend(p, STD_T2, WHITE_T2, share), 16);
+  const table = p.append(t2, 16);
   const getter = p.append(getterWords(table), 16);
   p.setWord(STD_VT_T2, getter, 'auto WB: plain Auto reads its own copy of the shared table');
+}
+
+/** Plain Auto's three tables as the official 1.11 file has them (for building replacements). */
+export function officialAutoTables(p: Patch): { t2: Uint8Array; t4: Uint8Array; t5: Uint8Array; white: { t2: Uint8Array; t4: Uint8Array; t5: Uint8Array } } {
+  checkLayout(p);
+  return {
+    t2: p.readMapped(STD_T2, BYTES), t4: p.readMapped(STD_T4, BYTES), t5: p.readMapped(STD_T5, BYTES),
+    white: { t2: p.readMapped(WHITE_T2, BYTES), t4: p.readMapped(WHITE_T4, BYTES), t5: p.readMapped(WHITE_T5, BYTES) },
+  };
+}
+
+/**
+ * The plain Auto `share` of the way to White Priority (0 < share < 1; 0.5 is half way), for the
+ * warm indoor light where the two differ.
+ */
+export function installAwbBlend(p: Patch, share = 0.5): void {
+  if (!(share > 0 && share < 1)) throw new FirmwareError('internal', 'auto WB blend: share must be between 0 and 1');
+  checkLayout(p);
+  installAwbTables(p, blend(p, STD_T2, WHITE_T2, share), blend(p, STD_T4, WHITE_T4, share), blend(p, STD_T5, WHITE_T5, share),
+    'auto WB: plain Auto towards White Priority');
 }
