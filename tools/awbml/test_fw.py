@@ -266,10 +266,29 @@ def main():
         ctx = ctx_of(b)
         diff = [i for i in range(min(len(a), len(b))) if a[i] != b[i]]
         outside = [hex(base + i) for i in diff if base + i < ctx and not 0x53938E2C <= base + i < 0x53938E30]
+        if os.environ.get('EXPECT_SHADOW'): outside = [h for h in outside if not (0x5391F3A4 <= int(h, 16) < 0x5391F3A8 or 0x5404938C <= int(h, 16) < 0x54049390)]   # (checked strictly below)
         tail = hex(base + diff[-1]) if diff else None
         print(f'4. image vs {prev.split("/")[-2]}: lengths {len(a)} / {len(b)}; {len(diff)} bytes differ; outside the call word and the appended module area: {len(outside)}; '
               f'ctx {ctx_of(a):#x} -> {ctx:#x}, stub {stub_of(a):#x} -> {stub_of(b):#x}, last differing byte {tail}')
         if outside or len(a) != len(b): bad.append(('image differs elsewhere', outside[:5]))
+        if os.environ.get('EXPECT_SHADOW'):
+            # the final image (learned shadow correction added after this module) against the build without it: exactly the shadow hook
+            # word, the Auto gain TB[4], the shadow area appended into previously zero padding, and the checksum compensation word
+            hw = wd(b, 0x5391F3A4); off = struct.unpack('<i', struct.pack('<I', (hw & 0xffffff) << 8))[0] >> 8
+            assert hw >> 24 == 0xEA
+            sstub = 0x5391F3A4 + 8 + 4 * off                                           # the shadow stub; its first appended item is the context
+            dec_ = lambda x: ((x >> 4) & 0xf000) | (x & 0xfff)
+            end = (dec_(wd(b, sstub + 36)) << 16 | dec_(wd(b, sstub + 32))) - base      # the shadow context: the start of the appended shadow area
+            allowed_words = {0x5391F3A4, 0x5404938C}
+            extra = []
+            for i in diff:
+                ad = base + i
+                if any(ad - w_ in range(4) for w_ in allowed_words): continue
+                if i >= len(a) - 4: continue                       # compensation word
+                if i >= end and i < len(a) - 16 and a[i] == 0: continue
+                extra.append(hex(ad))
+            print(f'4b. final vs {prev.split("/")[-2]}: hook word, TB[4], appended shadow area from {base + end:#x} (bytes that were zero) and the compensation word differ; anything else: {len(extra)} {extra[:5]}')
+            if extra or len(a) != len(b): bad.append(('image differs beyond the shadow allowance', extra[:5]))
     for b_ in bad[:10]: print('MISMATCH', b_)
     print('RESULT', 'FAIL' if bad else 'all passed')
     sys.exit(1 if bad else 0)
