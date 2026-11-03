@@ -35,7 +35,7 @@ def load(path):
     lib = ctypes.CDLL(str(path))
     lib.host_run.restype = ctypes.c_int
     lib.host_run.argtypes = [ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
-                             ctypes.c_uint, ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+                             ctypes.c_uint, ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint]
     return lib
 
 
@@ -67,15 +67,18 @@ class Runner:
         self.offs = (ctypes.c_uint * len(ref.TABLE_ORDER))(*[offs[n] for n in ref.TABLE_ORDER])
         self.first = True
 
-    def run(self, mem, s_off, obj, fail_alloc=0, period=1, reset=None):
+    def run(self, mem, s_off, obj, fail_alloc=0, period=1, reset=None, still=0, af89=0, lv_exp=0):
         out = ctypes.create_string_buffer(OBJ_SIZE)
-        na = self.lib.host_run(mem, len(mem), s_off, obj, out, self.blob, len(self.blob), self.offs, fail_alloc, fail_alloc if reset is None else reset, period)
+        na = self.lib.host_run(mem, len(mem), s_off, obj, out, self.blob, len(self.blob), self.offs, fail_alloc, fail_alloc if reset is None else reset, period, af89, still, lv_exp)
         assert na <= 1
         o = out.raw
         if o == obj:
             return None, na
         changed = [i for i in range(OBJ_SIZE) if o[i] != obj[i]]
-        assert set(changed) <= {4, 5, 0xA, 0xB}, changed
+        assert set(changed) <= {4, 5, 0xA, 0xB, 0xAF89}, changed
+        assert af89 or 0xAF89 not in changed
+        if af89:
+            assert o[0xAF89] == 0
         return (struct.unpack_from('<H', o, 4)[0], struct.unpack_from('<H', o, 0xA)[0]), na
 
 
@@ -161,6 +164,11 @@ def main():
                                                          p['v24'], p['e30'], p['mode'])
             for name, r in runners.items():
                 got, na = r.run(mem, s_off, obj, int(fail_alloc), reset=1)   # a fresh scratch: the filter starts from this observation
+                gs, _ = r.run(mem, s_off, obj, int(fail_alloc), reset=1, still=1)   # a still gives the same single-frame result
+                if gs != got:
+                    print(f'STILL MISMATCH {tag} lib={name} still={gs} live={got} params={p}')
+                    stats['bad'] = stats.get('bad', 0) + 1
+                    return
                 if fail_alloc:
                     assert na == 1, na            # tried once, got nothing, left obj alone
                 if got != want:
@@ -199,9 +207,14 @@ def main():
         def sequences(tab_x, runners_x, n, tag):
             for sq in range(n):
                 period = int(rng.choice([ref.PERIOD] * 4 + [1, 2]))
-                seq = ref.AwbmlSeq(tab_x, period)
-                ok_calls = 0
+                af89 = int(rng.random() < 0.7)
+                lv_exp = int(rng.random() < 0.6)
+                seq = ref.AwbmlSeq(tab_x, period, lv_exp)
+                shadow = ref.AwbmlSeq(tab_x, period, lv_exp)          # the same live view calls without the stills
+                still_p = float(rng.choice([0.0, 0.3, 0.3, 0.6]))
                 last = None
+                steps = []
+                any_fail = False
                 for step in range(int(rng.integers(10, 40))):
                     if last is not None and rng.random() < 0.55:
                         arrs, p = last[0], dict(last[1])          # the same scene again: the filter converges
@@ -213,18 +226,44 @@ def main():
                         arrs, p = gen_random(rng)
                     last = (arrs, dict(p))
                     p['mode'] = int(rng.choice([0] * 9 + [1, 2]))
+                    still = int(rng.random() < still_p)
                     fail = step < 2 and rng.random() < 0.2 and not seq.buf
+                    any_fail |= fail
                     mem, s_off, obj, a_ = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng)
-                    want = seq.call(*[x.astype(np.int64) for x in a_], p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], alloc_ok=not fail)
+                    ia = [x.astype(np.int64) for x in a_]
+                    pa = (p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'])
+                    want = seq.call(*ia, *pa, alloc_ok=not fail, still=bool(still))
+                    if still:       # (a) a still equals the single-call reference on its own stats, whatever came before
+                        assert want == (None if fail else ref.awbml_ref(tab_x, *ia, *pa))
+                    else:           # (b) live view is unaffected by the stills
+                        wsh = shadow.call(*ia, *pa, alloc_ok=not fail)
+                        assert fail or wsh == want, (sq, step, wsh, want)
+                    steps.append((mem, s_off, obj, fail, still, want, step))
                     for name, r in runners_x.items():
-                        got, na = r.run(mem, s_off, obj, int(fail), period=period, reset=int(step == 0))
+                        got, na = r.run(mem, s_off, obj, int(fail), period=period, reset=int(step == 0), still=still, af89=af89, lv_exp=lv_exp)
                         if got != want:
-                            print(f'SEQ MISMATCH seq {sq} step {step} lib={name} C={got} ref={want} {p}')
+                            print(f'SEQ MISMATCH seq {sq} step {step} still {still} lib={name} C={got} ref={want} {p}')
                             stats['bad'] = stats.get('bad', 0) + 1
                             break
                     stats.setdefault(tag, [0, 0])
                     stats[tag][0] += 1
                     stats[tag][1] += want is None
+                    stats.setdefault('stills in ' + tag, [0, 0])
+                    if still:
+                        stats['stills in ' + tag][0] += 1
+                        stats['stills in ' + tag][1] += want is None
+                if sq % 3 == 0 and not any_fail and still_p > 0:
+                    # the C live view outputs are identical with the stills removed from the sequence
+                    live_steps = [x for x in steps if not x[4]]
+                    for name, r in runners_x.items():
+                        for k, (mem, s_off, obj, fail, still, want, step) in enumerate(live_steps):
+                            got, na = r.run(mem, s_off, obj, 0, period=period, reset=int(k == 0), still=0, af89=af89, lv_exp=lv_exp)
+                            if got != want:
+                                print(f'LIVE-ONLY MISMATCH seq {sq} live step {k} lib={name} C={got} with stills={want}')
+                                stats['bad'] = stats.get('bad', 0) + 1
+                                break
+                    stats.setdefault('live-only replays', [0, 0])
+                    stats['live-only replays'][0] += 1
 
         sequences(tab, runners, NSEQ, 'sequence-calls')
         for k, kf in enumerate([dict(rconf=0.13, flags=0), dict(rmin=0.02, rmax=0.12, q=0.005, rconf=0.15, gate=4, flags=1, knot_scale=3.0),

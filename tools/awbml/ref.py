@@ -498,8 +498,8 @@ class AwbmlSeq:
 
     counts = dict.fromkeys(['observations', 'first', 'scene resets', 'candidate frames held', 'R_post clamped at R_max (either axis)', 'confident (both axes R_eff below R_conf)'], 0)
 
-    def __init__(self, T, period=PERIOD):
-        self.T, self.period = T, period
+    def __init__(self, T, period=PERIOD, lv_exp=1):
+        self.T, self.period, self.lv_exp = T, period, lv_exp
         self.buf = False
         self.valid = False
         self.left = 0
@@ -508,9 +508,11 @@ class AwbmlSeq:
         self.allocs = 0
         self.state = None
 
-    def call(self, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, alloc_ok=True):
+    def call(self, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, alloc_ok=True, still=False):
+        """still: the estimate's third argument is non-zero: a fresh single-frame estimate that touches no live view state
+        (it may create the buffer, as the C code does)."""
         if mode != 0:
-            if self.buf:
+            if self.buf and not still:
                 self.valid = False
                 self.state = None
             return None
@@ -521,10 +523,14 @@ class AwbmlSeq:
             if not alloc_ok:
                 return None
             self.buf, self.valid, self.state = True, False, None
+        if still:
+            return awbml_ref(self.T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode)
         if self.valid and self.left:
             self.left -= 1
             return None if self.fb else self.g
         self.valid, self.fb, self.left = True, True, self.period - 1 if self.period > 1 else 0
+        if self.lv_exp:
+            v24 = -0x880                              # live view: the exposure data is treated as missing
         o = observe(self.T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode)
         if o is None:
             return None
