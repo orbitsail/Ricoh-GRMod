@@ -278,6 +278,8 @@ export interface BuildOptions {
   awbFit?: boolean;
   /** A learned white balance for the plain Auto (`aspect/awbml.ts`); experimental. */
   awbLearn?: boolean;
+  /** A learned Auto for Shadow Correction (`aspect/shadowml.ts`); experimental. */
+  shadowLearn?: boolean;
 }
 
 export interface ShutdownImage {
@@ -994,6 +996,7 @@ export class Engine {
       ...(options && options.awbBlend ? { awbBlend: options.awbBlend } : {}),
       ...(options && options.awbFit ? { awbFit: true } : {}),
       ...(options && options.awbLearn ? { awbLearn: true } : {}),
+      ...(options && options.shadowLearn ? { shadowLearn: true } : {}),
     };
     const { decoded: _decoded, ...rest } = await buildFirmware(this.raw, edits, ratios, clarity, features, test);
     return rest;

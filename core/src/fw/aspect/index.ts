@@ -36,3 +36,4 @@ export type { BrightAutoCurve } from './brightauto';
 export { installAwbBlend, installAwbTables, officialAutoTables } from './awbblend';
 export { installAwbFit } from './awbfit';
 export { installAwbLearn } from './awbml';
+export { installShadowLearn } from './shadowml';

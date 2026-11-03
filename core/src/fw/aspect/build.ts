@@ -39,6 +39,7 @@ import { installBrightAuto } from './brightauto';
 import { installAwbBlend } from './awbblend';
 import { installAwbFit } from './awbfit';
 import { installAwbLearn } from './awbml';
+import { installShadowLearn } from './shadowml';
 import type { CpuLutLook } from './cpulut';
 import { halationLight } from './halation';
 import type { HalationLook } from './halation';
@@ -164,6 +165,8 @@ export interface TestOptions {
   awbFit?: boolean;
   /** Experimental: a learned white balance (FFCC-style model) for the plain Auto (see `awbml.ts`); allowed together with awbFit. */
   awbLearn?: boolean;
+  /** Experimental: a learned Auto for Shadow Correction (see `shadowml.ts`); appended after the learned white balance. */
+  shadowLearn?: boolean;
 }
 
 export interface AspectResult {
@@ -1114,6 +1117,8 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
   // Appended after everything else, so that every other addition keeps the place it has without it
   // (not a settings hook: the guard does not need to wrap it).
   if (test.awbLearn) installAwbLearn(patch);
+  // After the learned white balance, so that it keeps its addresses too.
+  if (test.shadowLearn) installShadowLearn(patch);
   if (patch.length % 4 !== 0) fail('internal', 'image length is not a multiple of 4');
   if (BASE + patch.length >= APPEND_LIMIT) fail('too-many-ratios', 'the appended area would reach the RAM area');
   return { revision, rtos: patch.bytes(), iconbin: icons, ratios: [...ratios], words: patch.words, features: { adjSoftFocus: !!features.adjSoftFocus, ...(features.dateStamp ? { dateStamp: true } : {}), ...(features.monoUnlock ? { monoUnlock: true } : {}), ...(slots.length > 0 ? { extraSlots: [...slots] } : {}), ...(shutdown ? { shutdown } : {}), ...(features.guard ? { guard: true } : {}), ...(cinema.length > 0 ? { cinemaHalation: Object.fromEntries(cinema.map((id) => [id, true])) } : {}), ...(features.lookLayout ? { lookLayout: features.lookLayout } : {}), ...(features.directFlash ? { directFlash: true } : {}) } };
