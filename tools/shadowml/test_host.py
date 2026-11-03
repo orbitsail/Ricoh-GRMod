@@ -218,7 +218,7 @@ def run_lib(name, lib, dngs, n_random, seed):
     rng = np.random.default_rng(seed)
     t0 = time.time()
     pool = thr_pool(rng)
-    models = [(open(os.environ['SHADOWML_MODEL'],'rb').read() if os.environ.get('SHADOWML_MODEL') else ref.placeholder_blob()), ref.constant_blob(300), ref.constant_blob(0), ref.constant_blob(-1), ref.constant_blob(0x900)] + [rand_blob(rnd, pool) for _ in range(12)]
+    models = [open(os.environ.get('SHADOWML_MODEL') or str(Path(__file__).resolve().parent / 'model' / 'model_final.bin'), 'rb').read(), ref.placeholder_blob(), ref.constant_blob(300), ref.constant_blob(0), ref.constant_blob(-1), ref.constant_blob(0x900)] + [rand_blob(rnd, pool) for _ in range(12)]
     # 1. the DNGs: both paths (the same planes placed at the still and at the live-view offsets), hl 0 and 1, several models
     for fn, w, h, R, G, B, C in dngs:
         for mode in (0, 1, 2, 3):

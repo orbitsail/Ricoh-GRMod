@@ -89,7 +89,7 @@ def main(n_random=1500):
     rng = np.random.default_rng(21)
     dngs = TH.dng_scenes()
     pool = TH.thr_pool(rng)
-    models = [(open(os.environ['SHADOWML_MODEL'],'rb').read() if os.environ.get('SHADOWML_MODEL') else ref.placeholder_blob()), ref.constant_blob(300), ref.constant_blob(-1)] + [TH.rand_blob(rnd, pool) for _ in range(10)]
+    models = [open(os.environ.get('SHADOWML_MODEL') or str(Path(__file__).resolve().parent / 'model' / 'model_final.bin'), 'rb').read(), ref.placeholder_blob(), ref.constant_blob(300), ref.constant_blob(-1)] + [TH.rand_blob(rnd, pool) for _ in range(10)]
     n = bad = regbad = wbad = 0
     cost = {}
     deepest = 0
@@ -152,7 +152,7 @@ def main(n_random=1500):
     print(f'ARM (unicorn) vs ref: {n} calls, {bad} mismatches; r4-r11/sp preserved: {n - regbad}/{n}; record unchanged: {n - wbad}/{n} ({time.time() - t0:.0f} s)')
     for k, v in cost.items():
         ins = [a for a, ok in v if ok]
-        print(f'instructions per call, {k} path (models[0], full computation): min {min(ins):,} mean {int(np.mean(ins)):,} max {max(ins):,} ({len(ins)} calls)')
+        print(f'instructions per call, {k} path (committed trained model, full computation): min {min(ins):,} mean {int(np.mean(ins)):,} max {max(ins):,} ({len(ins)} calls)')
     print(f'deepest stack write: {deepest} bytes (limit 320)')
     sys.exit(1 if bad or regbad or wbad or deepest > 320 else 0)
 

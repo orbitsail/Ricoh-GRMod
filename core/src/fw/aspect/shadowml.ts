@@ -2,12 +2,16 @@
 /**
  * Experimental: a learned Auto for Shadow Correction (GR IV / HDF / Monochrome, firmware 1.11).
  *
- * The shadow-correction core (ToneControlTuning, 0x5391F230) takes the strength from a histogram of a block-luminance array
- * in its Auto setting (sb[0x54] == 0); that array is a 16-bit-wrapped sum, so the camera's own Auto computes 0 on real
- * shots. The module of `tools/shadowml/shadowml.c` (integer only, bit-exact with `tools/shadowml/ref.py`) replaces that
- * decision: a gradient-boosted tree model (a data blob, `shadowml-data.ts`) on features of the AWB's block statistics
- * (the green plane as luminance, its log2 percentiles, the share of blocks 1..5 stops below the median, near-clipped blocks,
- * centre against border, the ISO index, the mode, the R/G and B/G colour cast) gives t = 0 .. 0x800.
+ * What Auto now does: a learned estimate of how much the median of five professional retouchers (MIT-Adobe FiveK, 975 images)
+ * would lift the shadows of the scene. The model (100 gradient-boosted trees, `tools/shadowml/model/model_final.bin`, embedded
+ * as `shadowml-data.ts`) sees relative-brightness features only: log2 percentiles of the block luminance (the green plane of the
+ * AWB's block statistics), the share of blocks 1..5 stops below the median, near-clipped blocks, centre against border, the
+ * ISO index, the mode, the R/G and B/G colour cast. Its output t = 0 .. 0x800 is still capped by the camera's own ISO limiter.
+ * On held-out images the regret is 0.0256, against 0.0310 for applying no lift and 0.0334 for the camera's own Auto rule computed
+ * on non-wrapped data. The camera's own Auto computes 0 on real shots: the shadow-correction core (ToneControlTuning,
+ * 0x5391F230) takes the strength from a histogram of a block-luminance array (sb[0x54] == 0) whose block sums wrap at 16 bits.
+ * The module of `tools/shadowml/shadowml.c` (integer only, bit-exact with `tools/shadowml/ref.py`) replaces that decision. The
+ * model is data: a new blob (`gen.py [model.bin]`) needs no new code.
  *
  * Hook (0x5391F3A4, directly after the call of the Y-array builder 0x538F75FC; the live-view call at 0x5391F800 branches back
  * to the same word, so both paths pass it): the instruction `ldr r2,[fp,#-0x450]` is replaced by a branch to a stub that
@@ -23,6 +27,10 @@
  *
  * Live view / movie (mode 1, 2) run the core on every frame: the module computes on every 4th call and holds the result in
  * between (one RAM word, SHADOWML_SLOT, below the heap; zero at start-up). Stills (mode 0, 3) always compute and never touch it.
+ *
+ * Working memory: one operator-new allocation (two disjoint halves, stills and live view, 776 bytes each; its pointer in the free
+ * RAM word SHADOWML_SCRATCH_SLOT, zero at start-up) keeps the module's stack at about 300 bytes. If the allocation fails the
+ * call gives the camera's no-correction result and the next one retries.
  *
  * Layout: the context, the module, the stub and the model blob are appended after everything else (as the learned white balance),
  * so every other addition keeps its place without this one. The state word is in the free RAM words before the heap at
