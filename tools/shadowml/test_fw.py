@@ -54,7 +54,7 @@ def word(buf, addr): return struct.unpack_from('<I', buf, addr - 0x53000000)[0]
 class Core:
     """One emulator of the core. inject: None (run the image as it is) or a ModelFeeder (the base RTOS fed with t)."""
 
-    def __init__(self, rtos, feeder=None, hooked=None):
+    def __init__(self, rtos, feeder=None, hooked=None, realy=False):
         fwemu.RTOS = rtos
         self.e = e = fwemu.Emu()
         self.mu = e.mu
@@ -66,7 +66,7 @@ class Core:
         self.entries = []          # (sp, r0..r3, [sp]) at every entry of the module
         mu = e.mu
         def skip(uc, addr, size, user): uc.reg_write(UC_ARM_REG_PC, uc.reg_read(fwemu.UC_ARM_REG_LR))
-        mu.hook_add(UC_HOOK_CODE, skip, begin=0x538F75FC, end=0x538F75FC + 4)    # the Y-array builder: not needed (the planes are given)
+        if not realy: mu.hook_add(UC_HOOK_CODE, skip, begin=0x538F75FC, end=0x538F75FC + 4)    # the Y-array builder: not needed (the planes are given)
         def on_alloc(uc, a, s, u): self.allocs += 1
         mu.hook_add(UC_HOOK_CODE, on_alloc, begin=ALLOC, end=ALLOC + 4)
         def on_any(uc, a, s, u):
