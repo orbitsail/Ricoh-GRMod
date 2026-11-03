@@ -33,3 +33,4 @@ export { CPULUT_MAGIC, CPULUT_NC, CPULUT_NY, CPULUT_TABLE_BYTES, cpulutModule, c
 export type { CpuLutLook } from './cpulut';
 export { BALANCED_AUTO_Y, BRIGHT_AUTO_CLAMP, BRIGHT_AUTO_TOP, BRIGHT_AUTO_X, BRIGHT_AUTO_Y, CURVE_X, OFFICIAL_AUTO_Y, installBrightAuto } from './brightauto';
 export type { BrightAutoCurve } from './brightauto';
+export { installAwbBlend } from './awbblend';

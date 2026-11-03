@@ -36,6 +36,7 @@ import { installMonoUnlock } from './monounlock';
 import { CINEMA_STYLES, installExtraSlots, installHalation } from './slots';
 import { installCpuLut } from './cpulut';
 import { installBrightAuto } from './brightauto';
+import { installAwbBlend } from './awbblend';
 import type { CpuLutLook } from './cpulut';
 import { halationLight } from './halation';
 import type { HalationLook } from './halation';
@@ -155,6 +156,8 @@ export interface TestOptions {
   /** A brighter rear screen when Outdoor View Setting is Auto (see `brightauto.ts`; PR #16): true or
    * 'bright' for the PR's curve, 'balanced' for the official curve indoors and brighter in strong light. */
   brightAuto?: boolean | 'bright' | 'balanced';
+  /** The plain Auto white balance this share of the way to White Priority under warm indoor light (see `awbblend.ts`). */
+  awbBlend?: number;
 }
 
 export interface AspectResult {
@@ -1094,6 +1097,7 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
   // date imprint work on the corrected picture.
   if (cpuLut.length > 0) installCpuLut(patch, cpuLut);
   if (test.brightAuto) installBrightAuto(patch, test.brightAuto === 'balanced' ? 'balanced' : 'bright');
+  if (test.awbBlend) installAwbBlend(patch, test.awbBlend);
   if (shutdown) icons = installShutdownMenu(patch, icons, shutdown.pictures, shutdown.factory);
   // After every other addition that copies the submenu or list table.
   if (features.directFlash) icons = installDirectFlashMenu(patch, icons);
