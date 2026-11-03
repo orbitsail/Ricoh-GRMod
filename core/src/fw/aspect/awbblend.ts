@@ -5,13 +5,19 @@
  * too warm, and White Priority makes it too white.
  *
  * The AWB takes its tuning from one of CWhiteBalanceTuningParameter{Standard, White, Atmosphere,
- * CTE} (Auto, Auto WB White Priority, Auto WB Warmth Priority, CTE). Each class has three byte
- * tables of 24 rows x 33 columns, read by getters `table[row * 33 + column]` (0x5393E444 ..
- * 0x5393E5AC; vtables at 0x542FE760 Standard, 0x542FE7C0 White, 0x542FE840 Atmosphere):
+ * CTE} (Auto, Auto WB White Priority, Auto WB Warmth Priority, CTE). 0x5393C39C picks the class by
+ * the mode (0 Auto, 1 Warmth, 2 White, 3 CTE) and copies one column of its tables into each of the
+ * AWB's 33 light-source frames; the mode byte (+0xAF88) is read nowhere else, so the modes differ
+ * only in these tables. Each class has byte tables of 24 rows x 33 columns, read by getters
+ * `table[row * 33 + column]` (0x5393E444 .. 0x5393E5AC; vtables at 0x542FE760 Standard, 0x542FE7C0
+ * White, 0x542FE840 Atmosphere): a column is a frame, a row one of 24 brightness levels of the
+ * statistics (the warm frames weigh nothing in the brightest ones). One table weighs the frame
+ * (0..255, read at 0x5393BBBC), two shift it (128 = none, 0x5393BB04 / 0x5393BB60):
  *   Standard   0x55053E04 (shared with Atmosphere), 0x55054434, 0x5505411C
  *   White      0x55054A64,                          0x5505474C, 0x55054D7C
- * The modes differ only in some columns of the darker rows (indoor light): White's values are the
- * highest, Atmosphere's the lowest, the bright rows are alike. Here Standard's own two tables become
+ * A fourth table (0x55053AEC, the frame's kind) is shared by all four classes. The modes differ in
+ * some frames, mostly in the darker rows: White's values are the highest, Atmosphere's the lowest;
+ * in the four brightest rows only one frame differs, by 5. Here Standard's own two tables become
  * Standard + share x (White - Standard), and Standard gets its own copy of the shared table with the
  * same blend: its vtable entry (0x542FE770) points at a copy of the official getter that reads the
  * copy. White and Warmth Priority stay exactly as they are. Data and one table pointer; no logic
