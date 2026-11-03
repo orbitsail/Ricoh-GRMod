@@ -11,19 +11,34 @@
  * function): 64 x 62 block means and counts, and the scene brightness.
  *
  * Only the plain Auto (this+0xAF88 == 0) is touched; White Priority and Warmth Priority stay as the camera has them. When
- * the scene has too few usable blocks (under 5 % of the pixels) the camera's own result is kept. The estimate runs on
- * the first call and then on every fourth (live view calls it on every frame; a full estimate is about 2.2 M
- * instructions), the calls in between repeat the last result; leaving plain Auto forgets it.
+ * the scene has too few usable blocks (under 5 % of the pixels) the camera's own result is kept.
  *
- * Temporal filter (FFCC's): each computing call's estimate is an observation whose variance is the spread of the
- * softmax marginals mapped through a measured table (what the estimate really varies by from frame to frame); a Kalman
+ * Two paths, told apart by the estimate's third argument (r2, copied to r7 at the entry and untouched up to the hook: 0 for
+ * live view, which calls LiveViewWhiteBalance::Execute, the still record pointer for a still, which comes from
+ * WbCalcProcess; the stub passes it as is_still):
+ *  - Live view runs on every frame, so the estimate is computed on the first call and then on every fourth (a full
+ *    estimate is about 2.2 M instructions), the calls in between repeat the last result; leaving plain Auto forgets it. The
+ *    camera's own boxcar smoothing still follows on the final gains.
+ *  - A still always computes fresh from its own statistics: no throttle, no repeat, no temporal filter, and it never reads or
+ *    changes the live view's state (counter, cached result, filter). The two paths may run in different tasks, so each has
+ *    its own region of the scratch memory (one allocation of two regions, kept in the one RAM slot).
+ *
+ * Temporal filter (FFCC's, live view only): each computing call's estimate is an observation whose variance is the spread of
+ * the softmax marginals mapped through a measured table (what the estimate really varies by from frame to frame); a Kalman
  * filter per axis (parameters and that table in the KF table, nothing to change in the code) smooths the estimate over the
- * computing calls, so live view does not jump and consecutive shots agree; two confident frames in a row, both far from
- * the state in the same direction, restart it (scene change). Plain-Auto-only: leaving it clears the state.
+ * computing calls, so live view does not jump; two confident frames in a row, both far from the state in the same
+ * direction, restart it (scene change). Leaving plain Auto clears the state.
+ *
+ * Live view's S has v24/v28/v2c never written (0) and e30 from a record word nothing writes (so probably 0, which would read as a
+ * very dark scene), so live view treats the exposure data as missing (the context's live view exposure mode, 1); stills keep using S.
+ *
+ * The context's AF89 flag (on in this build) makes the module also write 0 to this+0xAF89 whenever it overrides the gains with a valid estimate (a repeated live view result too; never on a fallback or in another mode):
+ * the final stage sets that byte when the camera's own sums are all zero, and the live view smoother then holds the previous
+ * value; a learned estimate does not depend on those sums.
  *
  * Layout: the context, the module and the stub are appended (as the other modules), then the 79 KB of tables
  * (`awbml-data.ts`); build.ts installs this after every other addition, so they all keep the places they have
- * without it (the image then differs from one without it only in the call word and the appended bytes). The module's scratch buffer (35 KB, `operator new`, called once) is kept in the RAM word
+ * without it (the image then differs from one without it only in the call word and the appended bytes). The module's scratch memory (2 x 35 KB, one `operator new` call, made once) is kept in the RAM word
  * 0x558372DC, which the start-up zero fill must clear (the literal at 0x53000460 is extended to 0x55837300 if not
  * already, as the look slots do).
  */
@@ -37,6 +52,7 @@ import { AWBML_DATA, AWBML_DATA_LENGTH, AWBML_OFFSETS } from './awbml-data';
 const AUTO_ESTIMATE = 0x53938b28;
 const S_TO_R5 = 0x53938b40; // mov r5, r1   (S, for the whole function)
 const THIS_TO_R4 = 0x53938b4c; // mov r4, r0   (this)
+const ARG3_TO_R7 = 0x53938b54; // mov r7, r2   (the estimate's 3rd argument: 0 in live view, the still record for a still)
 const FINAL_CALL = 0x53938e2c; // bl final stage
 const FINAL_STAGE = 0x53938970;
 /** Operator new. */
@@ -46,7 +62,13 @@ export const AWBML_SLOT = 0x558372dc;
 /** Literal: end of the start-up zero fill. 44 unused bytes up to the heap (0x55837300) follow it. */
 const ZERO_FILL_END = 0x53000460;
 
-/** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot; the period follows them. */
+/** ctx flag: a gain override also clears Auto+0xAF89 (the camera's all-zero-sums hold flag, read by the live view smoother). On: its only reader is the live view smoother. */
+export const AWBML_AF89 = 1;
+
+/** ctx word, live view only: 1 = the exposure data in S (v24 = 0, e30 from a record word nothing writes) is treated as missing, the same as the camera's no-exposure marker; 0 = use S+0x30 as it is. Stills always use S. */
+export const AWBML_LV_EXP = 1;
+
+/** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot; the period, the AF89 flag and the live view exposure mode follow them. */
 const TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL', 'KF', 'LN'] as const;
 
 function fail(code: string, message: string): never {
@@ -79,7 +101,8 @@ export interface AwbLearnLayout {
 
 /** The learned white balance for the plain Auto. */
 export function installAwbLearn(p: Patch): AwbLearnLayout {
-  // The hook relies on r4 = this, r5 = S, and the final-stage call.
+  // The hook relies on r4 = this, r5 = S, r7 = the 3rd argument (untouched to the hook), and the final-stage call.
+  expectWord(p, ARG3_TO_R7, 0xe1a07002); // mov r7, r2
   expectWord(p, S_TO_R5, 0xe1a05001); // mov r5, r1
   expectWord(p, THIS_TO_R4, 0xe1a04000); // mov r4, r0
   expectWord(p, FINAL_CALL - 8, 0xe1a00004); // mov r0, r4
@@ -92,7 +115,7 @@ export function installAwbLearn(p: Patch): AwbLearnLayout {
   }
   const module = awbmlModule();
   const data = awbmlData();
-  const ctx = p.append(u32le([AWBML_MAGIC, AWBML_ALLOC, AWBML_SLOT, ...TABLE_ORDER.map(() => 0), AWBML_PERIOD]), 16);
+  const ctx = p.append(u32le([AWBML_MAGIC, AWBML_ALLOC, AWBML_SLOT, ...TABLE_ORDER.map(() => 0), AWBML_PERIOD, AWBML_AF89, AWBML_LV_EXP]), 16);
   const code = p.append(module, 16);
   const stub = p.append((at) => assembleWords(
     `push {r4-r6,lr}
@@ -101,6 +124,7 @@ export function installAwbLearn(p: Patch): AwbLearnLayout {
      movw r0,#${ctx & 65535};movt r0,#${ctx >>> 16}
      mov r1,r6
      mov r2,r5
+     mov r3,r7
      bl #${code}
      pop {r4-r6,pc}`, at), 16);
   const tables = p.append(data, 16);

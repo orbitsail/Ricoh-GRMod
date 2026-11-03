@@ -9,7 +9,7 @@
  * low light, measured on real GR IV shots) corrects the estimate; the result is written as the camera's own R and B
  * gains (obj + 4 and obj + 0xA, 1.13 fixed point).
  *
- * Called from the AWB with (ctx, obj, S): `obj` the AWB object, `S` the settings block the stats come through
+ * Called from the AWB with (ctx, obj, S, is_still): `obj` the AWB object, `S` the settings block the stats come through
  * (+0x00..+0x10 pointers to the per-block u32 arrays R, Gr, Gb, B, count; +0x14 u16 stride; +0x1C u16 x0, +0x1E y0,
  * +0x20 w, +0x22 h; +0x24 s32 v24 (-0x880: no exposure data); +0x30 s32 scene brightness Av+Tv-Sv, 8.8 EV).
  * Nothing is written unless obj[0xAF88] == 0 (plain Auto), w, h in 1..64, the scratch buffer exists and at least
@@ -18,11 +18,15 @@
  * Integer only (no float, no division by variables, no 64-bit division or variable 64-bit shifts), position
  * independent, no global data: every table comes through the context. tools/awbml/ref.py is the bit-exact
  * reference and builds the tables (layout there); stack use is a few hundred bytes, the scratch buffer is
- * allocated once (AWBML_SCRATCH_BYTES).
+ * allocated once (two regions of AWBML_SCRATCH_BYTES: live view and stills).
  *
  * Temporal filter (FFCC): the calibrated estimate is an observation whose variance is the spread of the softmax
  * marginals mapped through a measured table (R_eff); a Kalman filter per axis (parameters in the KF table) smooths it over
  * the computing calls and restarts when two confident frames in a row disagree with the state in the same direction.
+ *
+ * Stills (is_still != 0, the Auto estimate's third argument) always compute fresh from their own statistics: no throttle, no
+ * filter, no access to the live view's state. Live view keeps the throttle and the filter, and (ctx->lv_exp) treats the
+ * exposure data in S as missing, since its S carries none (v24 = 0, e30 from a record word nothing writes).
  *
  * Throttling: the AWB runs on every live-view frame, so only the first call and then every `ctx->period`-th call
  * compute; the calls in between repeat the last result (or, if the last computation fell back, write nothing). A call
@@ -56,7 +60,9 @@ struct awbml_ctx {
   const i32 *cal;               /* [10] */
   const u32 *kf;                /* [8] Kalman filter parameters */
   const u32 *ln;                /* [257] */
-  u32 period;                   /* compute on every period-th call (1: always) */
+  u32 period;                   /* live view: compute on every period-th call (1: always) */
+  u32 af89;                     /* nonzero: a gain override also clears Auto+0xAF89 (the camera's all-zero-sums hold flag) */
+  u32 lv_exp;                   /* live view only: 1 = the exposure data (S+0x24 / S+0x30) is not usable and is treated as missing, 0 = use it */
 };
 
 struct scratch {
@@ -93,7 +99,7 @@ extern const unsigned char *awbml_host_base; /* host tests: the stats pointers a
 #define S_PTR(v) ((const u32 *)(v))
 #endif
 
-void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char *S);
+void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char *S, u32 is_still);
 
 static u32 rd16(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8); }
 static u32 rd32(const u8 *p) { return rd16(p) | (rd16(p + 2) << 16); }
@@ -107,7 +113,17 @@ static void wr16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }
 
 typedef char awbml_scratch_size_check[sizeof(struct scratch) == AWBML_SCRATCH_BYTES ? 1 : -1];
 
-static i32 ilog(const struct awbml_ctx *k, u32 x) { return k->log[x]; }
+/* Test hook (host fuzzing only): lets the test corrupt the scratch between and inside the stages, as a second task using the
+ * same memory would. Every index below must stay in bounds whatever the scratch holds. */
+#ifdef AWBML_FUZZ
+extern void awbml_fuzz(void *sc, int point);
+#define FUZZ(sc, p) awbml_fuzz(sc, p)
+#else
+#define FUZZ(sc, p) ((void)0)
+#endif
+
+/* x is at most 0xF6D for the block values; the clamp only matters if the scratch was corrupted */
+static i32 ilog(const struct awbml_ctx *k, u32 x) { return k->log[x > 4095 ? 4095 : x]; }
 
 static u32 gmean(u32 gr, u32 gb) { return (gr >> 1) + (gb >> 1) + ((gr | gb) & 1); }
 
@@ -329,7 +345,7 @@ STAGE u64 histograms(const struct awbml_ctx *ctx, struct scratch *sc, const stru
         if (!(bc >> 16)) continue;
         sbc = sc->cbc[x] + sc->cbc[x + 1] + sc->cbc[x + 2] - bc;
         cn = sbc >> 16;
-        if (!cn) continue;
+        if (!cn || cn > 8) continue;                 /* 1..8 neighbours (more only if the scratch was corrupted) */
         srg = sc->crg[x] + sc->crg[x + 1] + sc->crg[x + 2] - rg;
         r = rg & 0xffff; g = rg >> 16; b = bc & 0xffff;
         sr = srg & 0xffff; sg = srg >> 16; sb = sbc & 0xffff;
@@ -348,6 +364,7 @@ STAGE u64 histograms(const struct awbml_ctx *ctx, struct scratch *sc, const stru
         }
       }
     }
+    FUZZ(sc, 10);
     prev = cur; cur = cur == 2 ? 0 : cur + 1;
   }
   *t1p = tot1; *t2p = tot2;
@@ -366,7 +383,9 @@ STAGE void convolve(const struct awbml_ctx *ctx, struct scratch *sc) {
   for (i = 0; i < 64; i++) if (sc->rowflag[i]) lines[n++] = (u8)i;
   fft_fwd(sc->re, sc->im, 1, 64, lines, n, ctx->tw);
   for (i = 0; i < 64; i++) lines[i] = (u8)i;
+  FUZZ(sc, 11);
   fft_fwd(sc->re, sc->im, 64, 1, lines, 64, ctx->tw);
+  FUZZ(sc, 12);
   for (kx = 0; kx <= 32; kx++) {
     int both = kx == 0 || kx == 32;
     kmax = both ? 32 : 63;
@@ -383,6 +402,7 @@ STAGE void convolve(const struct awbml_ctx *ctx, struct scratch *sc) {
       if (both) { sc->re[k2] = pr; sc->im[k2] = -pi; }
     }
   }
+  FUZZ(sc, 13);
   for (i = 0; i < 33; i++) lines[i] = (u8)i;
   fft_inv(sc->re, sc->im, 64, 1, lines, 33, ctx->tw);
   for (y = 0; y < 32; y++) {
@@ -396,6 +416,7 @@ STAGE void convolve(const struct awbml_ctx *ctx, struct scratch *sc) {
       r1[x] = a1r - a2i; i1[x] = a1i + a2r;
     }
   }
+  FUZZ(sc, 14);
   for (i = 0; i < 32; i++) lines[i] = (u8)i;
   fft_inv(sc->re, sc->im, 1, 64, lines, 32, ctx->tw);
 }
@@ -422,6 +443,7 @@ STAGE void scores(const struct awbml_ctx *ctx, struct scratch *sc, i32 v24, i32 
     }
   }
   for (i = 0; i < 64; i++) { sc->pu[i] = 0; sc->pv[i] = 0; }
+  FUZZ(sc, 15);
   for (h = 0; h < 2; h++) {
     const i32 *cell = h ? sc->im : sc->re;
     u32 *pu = sc->pu + h * 32;
@@ -434,6 +456,7 @@ STAGE void scores(const struct awbml_ctx *ctx, struct scratch *sc, i32 v24, i32 
       }
     }
   }
+  FUZZ(sc, 16);
   ou = (i32)circ_mean(ctx, sc->pu, ru);
   ov = (i32)circ_mean(ctx, sc->pv, rv);
   *pu_ = AWBML_U0Q + ((ou + 32768 + 16) >> 5);
@@ -513,45 +536,70 @@ static void kalman(struct scratch *sc, const u32 *kf, const i32 *z, const u32 *r
   }
 }
 
-/* Entry (first function in .text). */
-void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char *S) {
+static void put_gains(const struct awbml_ctx *ctx, unsigned char *obj, u32 g0, u32 g3) {
+  wr16(obj + 4, g0);
+  wr16(obj + 0xA, g3);
+  if (ctx->af89) obj[0xAF89] = 0;
+}
+
+/* Entry (first function in .text). is_still: 0 = live view, else a still (the estimate's third argument).
+ * The scratch allocation holds two regions of AWBML_SCRATCH_BYTES: [0] live view (also the throttle and the filter state),
+ * [1] stills (working arrays only; a still always computes fresh and never reads or changes the live view's state). */
+void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char *S, u32 is_still) {
   struct stats st;
-  struct scratch *sc;
+  struct scratch *sc, *live;
   u32 w, h, stride, x0, y0, t1, t2, fresh = 0;
   i32 v24, e30, pu, pv, z[2];
   u32 rr[2];
   if (ctx->magic != AWBML_MAGIC || !ctx->alloc || !ctx->slot) return;
-  if (obj[0xAF88] != 0) {                         /* not plain Auto: forget the last result */
-    if (*ctx->slot) { ((struct scratch *)*ctx->slot)->valid = 0; ((struct scratch *)*ctx->slot)->have = 0; }
+  if (obj[0xAF88] != 0) {                         /* not plain Auto: a live view call forgets the last result */
+    if (!is_still && *ctx->slot) { ((struct scratch *)*ctx->slot)->valid = 0; ((struct scratch *)*ctx->slot)->have = 0; }
     return;
   }
   stride = rd16(S + 0x14); x0 = rd16(S + 0x1c); y0 = rd16(S + 0x1e); w = rd16(S + 0x20); h = rd16(S + 0x22);
   v24 = (i32)rd32(S + 0x24); e30 = (i32)rd32(S + 0x30);
+  if (!is_still && ctx->lv_exp) v24 = -0x880;     /* live view: no usable exposure data */
   if (w < 1 || w > 64 || h < 1 || h > 64) return;
   if ((u64)(y0 + h - 1) * stride + x0 + w > (1u << 24)) return;
-  if (!*ctx->slot) { *ctx->slot = ctx->alloc(AWBML_SCRATCH_BYTES); fresh = 1; }
+  if (!*ctx->slot) { *ctx->slot = ctx->alloc(2 * AWBML_SCRATCH_BYTES); fresh = 1; }
   if (!*ctx->slot) return;
-  sc = (struct scratch *)*ctx->slot;
-  if (fresh) { sc->valid = 0; sc->have = 0; }
-  if (sc->valid && sc->left) {                    /* between two computations: repeat the last result */
-    sc->left--;
-    if (!sc->fb) { wr16(obj + 4, sc->g0); wr16(obj + 0xA, sc->g3); }
-    return;
+  live = (struct scratch *)*ctx->slot;
+  if (fresh) { live->valid = 0; live->have = 0; }
+  FUZZ(live, 20);
+  if (is_still) {
+    sc = (struct scratch *)((u8 *)live + AWBML_SCRATCH_BYTES);
+  } else {
+    sc = live;
+    if (sc->valid && sc->left) {                  /* between two computations: repeat the last result */
+      sc->left--;
+      if (!sc->fb) put_gains(ctx, obj, sc->g0, sc->g3);
+      return;
+    }
   }
+  FUZZ(sc, 0);
   st.r = S_PTR(rd32(S + 0)); st.gr = S_PTR(rd32(S + 4)); st.gb = S_PTR(rd32(S + 8));
   st.b = S_PTR(rd32(S + 12)); st.c = S_PTR(rd32(S + 16));
   st.stride = stride; st.x0 = x0; st.y0 = y0;
-  sc->valid = 1; sc->fb = 1; sc->left = ctx->period > 1 ? ctx->period - 1 : 0;
+  if (!is_still) { sc->valid = 1; sc->fb = 1; sc->left = ctx->period > 1 ? ctx->period - 1 : 0; }
   if (histograms(ctx, sc, &st, w, h, &t1, &t2) * 20 < (u64)w * h * 1584) return;
+  FUZZ(sc, 1);
   normalise(sc->rowflag, 1, sc->re, t1);
   normalise(sc->rowflag, 2, sc->im, t2);
+  FUZZ(sc, 2);
   convolve(ctx, sc);
+  FUZZ(sc, 3);
   scores(ctx, sc, v24, e30, &pu, &pv, &rr[0], &rr[1]);
+  FUZZ(sc, 4);
   calibrate(ctx->cal, &pu, &pv);
+  if (is_still) {                                 /* no filter: the single-frame estimate */
+    put_gains(ctx, obj, exp_gain(ctx, 0, pu), exp_gain(ctx, 1, pv));
+    return;
+  }
   z[0] = pu; z[1] = pv;
   rr[0] = reff(ctx, rr[0]); rr[1] = reff(ctx, rr[1]);
+  FUZZ(sc, 5);
   kalman(sc, ctx->kf, z, rr);
+  FUZZ(sc, 6);
   sc->g0 = exp_gain(ctx, 0, sc->mu[0]); sc->g3 = exp_gain(ctx, 1, sc->mu[1]); sc->fb = 0;
-  wr16(obj + 4, sc->g0);
-  wr16(obj + 0xA, sc->g3);
+  put_gains(ctx, obj, sc->g0, sc->g3);
 }
