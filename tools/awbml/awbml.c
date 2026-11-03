@@ -20,9 +20,9 @@
  * reference and builds the tables (layout there); stack use is a few hundred bytes, the scratch buffer is
  * allocated once (AWBML_SCRATCH_BYTES).
  *
- * Temporal filter (FFCC): the calibrated estimate is an observation with a variance from the spread of the softmax
- * marginals; a Kalman filter per axis (parameters in the KF table) smooths it over the computing calls and restarts when a
- * confident frame disagrees with the state.
+ * Temporal filter (FFCC): the calibrated estimate is an observation whose variance is the spread of the softmax
+ * marginals mapped through a measured table (R_eff); a Kalman filter per axis (parameters in the KF table) smooths it over
+ * the computing calls and restarts when two confident frames in a row disagree with the state in the same direction.
  *
  * Throttling: the AWB runs on every live-view frame, so only the first call and then every `ctx->period`-th call
  * compute; the calls in between repeat the last result (or, if the last computation fell back, write nothing). A call
@@ -75,6 +75,10 @@ struct scratch {
   u32 have;
   i32 mu[2];
   u32 sg[2];
+  /* a held-back scene change candidate: set, its observation and the direction it was far from the state per axis */
+  u32 cand;
+  i32 cz[2];
+  i32 cs[2];
 };
 
 struct stats {
@@ -460,28 +464,52 @@ static u32 divq16(u32 n, u32 d) {
   return q;
 }
 
-/* Temporal filter over the illuminant (Kalman, per axis): observation z with variance r; the output is sc->mu. */
+/* R_eff (Q32) from the posterior variance rp: linear in between the 17 knots at ln(rp / R_base) = j / 4 */
+static u32 reff(const struct awbml_ctx *k, u32 rp) {
+  i32 x = lnq(k, rp) - lnq(k, k->kf[5]);
+  u32 i, f;
+  if (x < 0) x = 0;
+  if (x > 16 * (1 << 22) - 1) x = 16 * (1 << 22) - 1;
+  i = (u32)x >> 22; f = (u32)x & ((1u << 22) - 1);
+  return k->kf[8 + i] + (u32)(((u64)(k->kf[9 + i] - k->kf[8 + i]) * f) >> 22);
+}
+
+/* Temporal filter over the illuminant (Kalman, per axis): observation z with variance r (R_eff); the output is sc->mu.
+ * A confident frame far from the state restarts it (flags bit 0 clear) or becomes a held-back candidate that the next confident
+ * frame, far in the same direction, confirms (bit 0 set); the restart is at that frame, or at the mean of the two (bit 1). */
 static void kalman(struct scratch *sc, const u32 *kf, const i32 *z, const u32 *r) {
-  int a, reset = 0;
+  int a;
+  i32 sign[2] = {0, 0};
   if (!sc->have) {
-    sc->have = 1;
+    sc->have = 1; sc->cand = 0;
     for (a = 0; a < 2; a++) { sc->mu[a] = z[a]; sc->sg[a] = r[a]; }
     return;
   }
   for (a = 0; a < 2; a++) sc->sg[a] += kf[2];
-  if (r[0] < kf[3] && r[1] < kf[3]) {              /* a confident frame far from the state: the scene changed */
+  if (r[0] < kf[3] && r[1] < kf[3]) {
     for (a = 0; a < 2; a++) {
       i64 d = (i64)z[a] - sc->mu[a];
-      if ((u64)(d * d) > (u64)kf[4] * ((u64)sc->sg[a] + r[a])) reset = 1;
+      if ((u64)(d * d) > (u64)kf[4] * ((u64)sc->sg[a] + r[a])) sign[a] = d > 0 ? 1 : -1;
+    }
+    if (sign[0] || sign[1]) {
+      if (!(kf[6] & 1) || (sc->cand && (sc->cs[0] * sign[0] > 0 || sc->cs[1] * sign[1] > 0))) {
+        for (a = 0; a < 2; a++) {
+          sc->mu[a] = (kf[6] & 2) && (kf[6] & 1) ? (sc->cz[a] + z[a]) >> 1 : z[a];
+          sc->sg[a] = r[a];
+        }
+        sc->cand = 0;
+      } else {
+        sc->cand = 1;
+        for (a = 0; a < 2; a++) { sc->cz[a] = z[a]; sc->cs[a] = sign[a]; }
+      }
+      return;
     }
   }
+  sc->cand = 0;
   for (a = 0; a < 2; a++) {
-    if (reset) { sc->mu[a] = z[a]; sc->sg[a] = r[a]; }
-    else {
-      u32 k = divq16(sc->sg[a], sc->sg[a] + r[a]);
-      sc->mu[a] += (i32)((((i64)k * ((i64)z[a] - sc->mu[a])) + 32768) >> 16);
-      sc->sg[a] -= (u32)((((u64)k * sc->sg[a]) + 32768) >> 16);
-    }
+    u32 k = divq16(sc->sg[a], sc->sg[a] + r[a]);
+    sc->mu[a] += (i32)((((i64)k * ((i64)z[a] - sc->mu[a])) + 32768) >> 16);
+    sc->sg[a] -= (u32)((((u64)k * sc->sg[a]) + 32768) >> 16);
   }
 }
 
@@ -521,6 +549,7 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   scores(ctx, sc, v24, e30, &pu, &pv, &rr[0], &rr[1]);
   calibrate(ctx->cal, &pu, &pv);
   z[0] = pu; z[1] = pv;
+  rr[0] = reff(ctx, rr[0]); rr[1] = reff(ctx, rr[1]);
   kalman(sc, ctx->kf, z, rr);
   sc->g0 = exp_gain(ctx, 0, sc->mu[0]); sc->g3 = exp_gain(ctx, 1, sc->mu[1]); sc->fb = 0;
   wr16(obj + 4, sc->g0);

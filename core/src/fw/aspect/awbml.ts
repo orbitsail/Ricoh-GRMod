@@ -15,10 +15,11 @@
  * the first call and then on every fourth (live view calls it on every frame; a full estimate is about 2.2 M
  * instructions), the calls in between repeat the last result; leaving plain Auto forgets it.
  *
- * Temporal filter (FFCC's): each computing call's estimate is an observation whose variance comes from the spread of the
- * softmax marginals; a Kalman filter per axis (parameters in the KF table, nothing to change in the code) smooths the
- * estimate over the computing calls, so live view does not jump and consecutive shots agree; a confident frame far from the
- * state restarts it (scene change). Plain-Auto-only: leaving it clears the state.
+ * Temporal filter (FFCC's): each computing call's estimate is an observation whose variance is the spread of the
+ * softmax marginals mapped through a measured table (what the estimate really varies by from frame to frame); a Kalman
+ * filter per axis (parameters and that table in the KF table, nothing to change in the code) smooths the estimate over the
+ * computing calls, so live view does not jump and consecutive shots agree; two confident frames in a row, both far from
+ * the state in the same direction, restart it (scene change). Plain-Auto-only: leaving it clears the state.
  *
  * Layout: the context, the module and the stub are appended (as the other modules), then the 79 KB of tables
  * (`awbml-data.ts`); build.ts installs this after every other addition, so they all keep the places they have

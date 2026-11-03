@@ -79,11 +79,21 @@ class Runner:
         return (struct.unpack_from('<H', o, 4)[0], struct.unpack_from('<H', o, 0xA)[0]), na
 
 
-def with_kf(tab, blob, offs, rmin=0.004, rmax=0.2, q=0.015, rconf=0.03, gate=9):
-    """The reference tables and blob with other filter parameters (the KF table)."""
-    kf = [round(rmin ** 2 * 2 ** 32), round(rmax ** 2 * 2 ** 32), round(q ** 2 * 2 ** 32), round(rconf ** 2 * 2 ** 32), gate, 0, 0, 0]
+def with_kf(tab, blob, offs, rmin=None, rmax=None, q=None, rconf=None, gate=None, rbase=None, flags=None, knot_scale=None):
+    """The reference tables and blob with other filter parameters (the KF table); sds in log units."""
+    kf = [int(x) for x in tab['KF']]
+    sq = lambda x: round(x ** 2 * 2 ** 32)
+    for i, v in ((0, rmin), (1, rmax), (2, q), (3, rconf), (5, rbase)):
+        if v is not None:
+            kf[i] = sq(v)
+    if gate is not None:
+        kf[4] = gate
+    if flags is not None:
+        kf[6] = flags
+    if knot_scale is not None:
+        kf[8:25] = [min(round(x * knot_scale), 2 ** 32 - 1) for x in kf[8:25]]
     tab2 = dict(tab); tab2['KF'] = np.array(kf, dtype=np.int64)
-    b = bytearray(blob); b[offs['KF']:offs['KF'] + 32] = np.array(kf, dtype='<u4').tobytes()
+    b = bytearray(blob); b[offs['KF']:offs['KF'] + 128] = np.array(kf, dtype='<u4').tobytes()
     return tab2, bytes(b)
 
 
@@ -217,7 +227,8 @@ def main():
                     stats[tag][1] += want is None
 
         sequences(tab, runners, NSEQ, 'sequence-calls')
-        for k, kf in enumerate([dict(rconf=0.13), dict(rmin=0.02, rmax=0.12, q=0.005, rconf=0.15, gate=4), dict(rmin=0.001, rmax=0.3, q=0.03, rconf=0.09, gate=16)]):
+        for k, kf in enumerate([dict(rconf=0.13, flags=0), dict(rmin=0.02, rmax=0.12, q=0.005, rconf=0.15, gate=4, flags=1, knot_scale=3.0),
+                              dict(rmin=0.001, rmax=0.3, q=0.03, rconf=0.09, gate=16, flags=3, rbase=0.002, knot_scale=0.5), dict(rconf=0.2, gate=1, flags=2, knot_scale=0.3)]):
             tab2, blob2 = with_kf(tab, blob, offs, **kf)
             runners2 = {nm: Runner(rn.lib, blob2, offs) for nm, rn in runners.items()}
             sequences(tab2, runners2, NSEQ // 2, f'sequence-calls KF set {k + 1}')

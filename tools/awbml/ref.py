@@ -17,8 +17,14 @@ are written to core/src/fw/aspect/awbml-data.ts by gen.py):
   TANH   i16[NTANH]       tanh(2e), e = (e30 - 1024)/1024, at e30 = E30_LO + 16 j, Q12
   GEXP   u32[2][NG]       16 * 8192 * K * exp(j/16 - 1), K = 0.6313*0.920 (R) and 0.3313*0.974 (B)
   RECIP  u32[9]           ceil(2^24 / (2 n)), n = 1..8: round(a / n) = ((2a + n) * RECIP[n]) >> 24
-  KF     u32[8]           Kalman filter (variances in log units^2, Q32): R_min, R_max, Q (per computing call), R_conf
-                          (a frame is confident below it), gate (scene change when (z - mu)^2 > gate * (Sigma + R)), 0, 0, 0
+  KF     u32[32]          Kalman filter (variances in log units^2, Q32): [0] R_min, [1] R_max (clamps of the posterior
+                          variance R_post), [2] Q (per computing call), [3] R_conf (a frame is confident when its R_eff
+                          is below it), [4] gate (a frame is far from the state when (z - mu)^2 > gate * (Sigma + R_eff)),
+                          [5] R_base (R_post at knot 0), [6] flags (bit 0: a scene change needs two confident far frames
+                          in the same direction, else one; bit 1: the restart value is the mean of the two frames, else
+                          the newer one), [7] 0, [8..24] R_eff at the 17 knots R_post = R_base exp(k / 4) (monotone,
+                          linear in between: the variance of the frame-to-frame estimate that the filter uses instead of
+                          the posterior variance), [25..31] 0
   LN     u32[257]         round(2^24 ln(1 + i/256))
   CAL    i32[10]          calibration: Pd_u, Pd_v, Dd_u, Dd_v, dU, dV (= Pt - Pd), DDu, DDv (= Dt - Dd), INV (u32 =
                           floor(2^48 / (dU^2 + dV^2))), 0   (all Q16 log units)
@@ -46,13 +52,16 @@ U0Q, V0Q = 0, -13107          # window corner in Q16 log units
 V_OFFSET = 419430             # round(0.2 * 32 * 65536)
 KR, KB = 0.6313 * 0.920, 0.3313 * 0.974
 # Kalman filter parameters (log units; variances are squares), tunable through the KF table without code changes
-KF_RMIN, KF_RMAX, KF_Q, KF_RCONF, KF_GATE = 0.004 ** 2, 0.2 ** 2, 0.015 ** 2, 0.03 ** 2, 9
+KF_RMIN, KF_RMAX, KF_Q, KF_RCONF, KF_GATE = 0.004 ** 2, 0.2 ** 2, 0.01 ** 2, 0.03 ** 2, 9
+KF_RBASE, KF_FLAGS, KF_NK, KF_STEP = 0.001, 3, 17, 1 << 22        # knot spacing: ln step 1/4 (Q24 2^22)
+KF_WORDS = 32
+REFF_JSON = HERE / 'reff.json'     # R_eff knots (Q32 integers), written by calib_r.py --write
 LN2Q = 11629080               # round(2^24 ln 2)
 VARC = 6640                   # round(2^16 ((64 / 2 pi) / 32)^2): radians^2 of the circular spread -> log units^2
 MAGIC = 0x4d425741            # 'AWBM'
 MAXCNT = 0xFFFF
 PERIOD = 4                    # build value of ctx->period
-SCRATCH_BYTES = 4096 * 4 * 2 + 64 * 4 * 2 + 2 * 3 * 64 * 4 + 2 * 66 * 4 + 5 * 4 + 64 + 5 * 4   # struct scratch in awbml.c
+SCRATCH_BYTES = 4096 * 4 * 2 + 64 * 4 * 2 + 2 * 3 * 64 * 4 + 2 * 66 * 4 + 5 * 4 + 64 + 5 * 4 + 5 * 4   # struct scratch in awbml.c
 TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL', 'KF', 'LN']
 DTYPES = dict(LOG='<i4', BIAS='<i2', FSPEC='<i4', TW='<i4', ATAN='<u4', EXPA='<u4', EXPB='<u4', TANH='<i2', GEXP='<u4',
               RECIP='<u4', CAL='<i4', KF='<u4', LN='<u4')
@@ -111,7 +120,10 @@ def build_tables(cal=None, params=None):
         a = np.arange(0, 2 * 8 * 0xF6D + 1)
         assert np.array_equal(((2 * a + n) * int(t['RECIP'][n])) >> 24, (2 * a + n) // (2 * n))
     c = cal
-    t['KF'] = np.array([rnd(KF_RMIN * 2 ** 32), rnd(KF_RMAX * 2 ** 32), rnd(KF_Q * 2 ** 32), rnd(KF_RCONF * 2 ** 32), KF_GATE, 0, 0, 0])
+    knots = json.loads(REFF_JSON.read_text())['knots'] if REFF_JSON.exists() else [rnd(KF_RMAX * 2 ** 32)] * KF_NK
+    assert len(knots) == KF_NK and all(a <= b for a, b in zip(knots, knots[1:]))
+    t['KF'] = np.array([rnd(KF_RMIN * 2 ** 32), rnd(KF_RMAX * 2 ** 32), rnd(KF_Q * 2 ** 32), rnd(KF_RCONF * 2 ** 32), KF_GATE,
+                        rnd(KF_RBASE * 2 ** 32), KF_FLAGS, 0] + list(knots) + [0] * (KF_WORDS - 8 - KF_NK))
     t['LN'] = np.array([rnd(2 ** 24 * math.log(1 + i / 256)) for i in range(257)])
     t['CAL'] = np.array(list(c['Pd']) + list(c['Dd']) + list(c['dP']) + list(c['dD']) + [c['inv'], 0])
     blob = bytearray()
@@ -388,24 +400,44 @@ def exp_gain(T, which, x):
     return min(max(g, 1024), 65535)
 
 
+def reff(T, rp):
+    """R_eff (Q32) from the posterior variance rp (Q32): piecewise linear over ln(rp / R_base) in steps of 1/4 (as the C code)."""
+    kf = [int(x) for x in T['KF']]
+    x = min(max(lnq(T, rp) - lnq(T, kf[5]), 0), 16 * KF_STEP - 1)
+    i, f = x >> 22, x & (KF_STEP - 1)
+    return kf[8 + i] + (((kf[9 + i] - kf[8 + i]) * f) >> 22)
+
+
 def kalman(T, state, z, r):
-    """One computing call's observation z = (u', v') (Q16) with variances r (Q32). state: None or dict(mu, sg); returns the
-    new state (the filter output is its mu). Mirrors kalman() in awbml.c."""
+    """One computing call's observation z = (u', v') (Q16) with variances r = R_eff (Q32). state: None or dict(mu, sg, cand,
+    cz, cs); returns the new state (the filter output is its mu). Mirrors kalman() in awbml.c.
+
+    A confident frame (both R_eff < R_conf) that is far from the state (d^2 > gate (Sigma + R) on an axis) restarts the filter
+    (flags bit 0 clear), or, with bit 0 set, is held back as a candidate (the state only grows by Q) until the next frame is
+    also confident and far in the same direction on an axis; then the filter restarts at that frame (bit 1 clear) or at the mean
+    of the two (bit 1 set), with Sigma = R_eff. Any other frame drops the candidate and takes the ordinary update."""
     kf = [int(x) for x in T['KF']]
     if state is None:
-        return dict(mu=list(z), sg=list(r))
+        return dict(mu=list(z), sg=list(r), cand=0, cz=[0, 0], cs=[0, 0])
     mu, sg = list(state['mu']), [x + kf[2] for x in state['sg']]
+    cand, cz, cs = state['cand'], list(state['cz']), list(state['cs'])
     if r[0] < kf[3] and r[1] < kf[3]:
+        sign = [0, 0]
         for a in range(2):
             d = z[a] - mu[a]
             if d * d > kf[4] * (sg[a] + r[a]):
-                return dict(mu=list(z), sg=list(r))
+                sign[a] = 1 if d > 0 else -1
+        if sign[0] or sign[1]:
+            if not kf[6] & 1 or (cand and (cs[0] * sign[0] > 0 or cs[1] * sign[1] > 0)):
+                m = [(cz[a] + z[a]) >> 1 for a in range(2)] if kf[6] & 2 and kf[6] & 1 else list(z)
+                return dict(mu=m, sg=list(r), cand=0, cz=[0, 0], cs=[0, 0], reset=1)
+            return dict(mu=mu, sg=sg, cand=1, cz=list(z), cs=sign, held=1)
     for a in range(2):
         den = sg[a] + r[a]
         k = (sg[a] << 16) // den                      # the C code: 16 shift-subtract steps
         mu[a] += (k * (z[a] - mu[a]) + 32768) >> 16
         sg[a] -= (k * sg[a] + 32768) >> 16
-    return dict(mu=mu, sg=sg)
+    return dict(mu=mu, sg=sg, cand=0, cz=[0, 0], cs=[0, 0])
 
 
 def observe(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode):
@@ -464,7 +496,7 @@ class AwbmlSeq:
     usable grid; the calls between repeat the cached (g0, g3) or, if the computation fell back, return None; a call with
     mode != 0 forgets the cache (if the buffer exists). alloc_ok=False models a failing operator new."""
 
-    counts = dict.fromkeys(['observations', 'first', 'scene resets', 'R clamped at R_max (either axis)', 'confident (both axes below R_conf)'], 0)
+    counts = dict.fromkeys(['observations', 'first', 'scene resets', 'candidate frames held', 'R_post clamped at R_max (either axis)', 'confident (both axes R_eff below R_conf)'], 0)
 
     def __init__(self, T, period=PERIOD):
         self.T, self.period = T, period
@@ -497,11 +529,13 @@ class AwbmlSeq:
         if o is None:
             return None
         prev = self.state
-        self.state = kalman(self.T, self.state, o[:2], o[2:])
+        rr = [reff(self.T, o[2]), reff(self.T, o[3])]
+        self.state = kalman(self.T, self.state, o[:2], rr)
         AwbmlSeq.counts['observations'] += 1
         AwbmlSeq.counts['first'] += prev is None
-        AwbmlSeq.counts['scene resets'] += prev is not None and self.state['mu'] == list(o[:2]) and self.state['sg'] == list(o[2:])
-        AwbmlSeq.counts['R clamped at R_max (either axis)'] += max(o[2:]) >= int(self.T['KF'][1])
-        AwbmlSeq.counts['confident (both axes below R_conf)'] += max(o[2:]) < int(self.T['KF'][3])
+        AwbmlSeq.counts['scene resets'] += bool(self.state.get('reset'))
+        AwbmlSeq.counts['candidate frames held'] += bool(self.state.get('held'))
+        AwbmlSeq.counts['R_post clamped at R_max (either axis)'] += max(o[2:]) >= int(self.T['KF'][1])
+        AwbmlSeq.counts['confident (both axes R_eff below R_conf)'] += max(rr) < int(self.T['KF'][3])
         self.fb, self.g = False, (exp_gain(self.T, 0, self.state['mu'][0]), exp_gain(self.T, 1, self.state['mu'][1]))
         return self.g
