@@ -36,6 +36,7 @@ MY = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(MY)
 
 ALLOC, SLOT, CANARY_FAIL, CANARY_CMP = 0x538E09B0, 0x558372DC, 0x53938E50, 0x53938E38
 STILL = 0x60700000
+REC_P = 0x55A00000
 
 
 def _ctx_addr(path):
@@ -84,12 +85,17 @@ class Fw:
             if a >= CTX7 and sp < self.sp_min_mod: self.sp_min_mod = sp
         return mu.hook_add(UC_HOOK_CODE, on)
 
-    def run(self, S, mode, count_insns=False, r2=0, stack=False):
+    def run(self, S, mode, count_insns=False, r2=0, stack=False, rec=None):
         e = self.e
+        saved_blocks = H.BLOCKS
+        if rec is not None:                  # a fake live view record P = 0x55A00000 with S[0] = P + 0x4D2C0 and the three float words
+            H.BLOCKS = REC_P + 0x4D2C0
         S = dict(S); S['s34'] = mode
         nblk = 64 * 64
         S['flags'] = [0] * nblk
         H.setup_S(e, S, nblk)
+        H.BLOCKS = saved_blocks
+        if rec is not None: e.wb(REC_P + 0x38D20, struct.pack('<3I', *rec))
         e.wb(e.r32(A_OBJ + 0xAF8C), bytes(nblk + 4))
         for i, l in enumerate(LIMS): e.w16(A_OBJ + 0x6A68 + 2 * i, l)
         regs = [0xA0A0A000 + i for i in range(8)]
@@ -196,7 +202,7 @@ def main():
     for q in range(nseq):
         a, b, c = Fw(V6), Fw(V7), Fw(V7)       # camera alone; interleaved lives and stills; the lives alone
         af = q % 4 != 1                      # the build has it on; every fourth sequence switches it off
-        lvx = 0 if q % 3 == 2 else 1          # live-view exposure mode: 1 (the build) or 0 (use S)
+        lvx = (1, 0, 2)[q % 3]               # live-view exposure mode: 1, 0 (use S) or 2 (the build; no record here, so the same as 1)
         for fw_ in (b, c): fw_.e.w32(CTX7 + 68, int(af)); fw_.e.w32(CTX7 + 72, lvx)
         seq = ref.AwbmlSeq(TAB, ref.PERIOD, lvx)
         ptr = None
@@ -265,6 +271,57 @@ def main():
     r = np.array(ratios)
     print(f'2b. S+0x68/0x6E (unity / x1.563,x3.019 / other): {nsc} calls, mismatches vs ref {sbad2}; still at unity bit-identical to v8c {nunity}; live view checks {nlive_same}; '
           f'still output divided by (unity output x word / 0x2000): R {r[:, 0].min():.4f}..{r[:, 0].max():.4f}, B {r[:, 1].min():.4f}..{r[:, 1].max():.4f}')
+    # ---- 5. live view exposure mode 2 (the build's default): the exposure floats of a fake live view record at S[0] - 0x4D2C0.
+    #  (a) a live call with a valid triple == a still call (at S+0x68/6E unity, so unscaled) with the same stats and v24 / e30 from the triple, == ref;
+    #  (b) a live call with a rejected record, or S[0] outside RAM, == the 8.1 firmware's live call (mode 1); (c) stills with a record == 8.1's stills.
+    import struct as _st
+    V81 = _os.environ.get('V81_RTOS', f'{SPD}/cpulut/final2/RTOS.bin')
+    fb = lambda x: _st.unpack('<I', _st.pack('<f', x))[0]
+    valid = [(4.0, 7.0, 7.5), (2.0, 9.0, 4.0), (6.5, 5.0, 9.0), (3.0, 0.5, 5.0), (8.0, 3.0, 12.5), (5.0, 7.25, 8.0)]
+    rejects = [(0, 0, 0), (0x7FC00000, fb(7.0), fb(7.5)), (fb(4.0), 0x7F800000, fb(7.5)), (fb(4.0), fb(7.0), 0xFF800000),
+               (fb(-4.0), fb(7.0), fb(7.5)), (fb(4.0), fb(7.0), fb(-7.5)), (fb(0.5), fb(7.0), fb(7.5)), (fb(11.0), fb(7.0), fb(7.5)), (fb(4.0), fb(-6.0), fb(7.5)),
+               (fb(4.0), fb(16.0), fb(7.5)), (fb(4.0), fb(7.0), fb(2.0)), (fb(4.0), fb(7.0), fb(16.0)), (fb(10.0), fb(15.0), fb(3.0)), (fb(1.0), fb(-5.0), fb(15.0)),
+               (fb(1e9), fb(7.0), fb(7.5)), (0x80000000, fb(7.0), fb(7.5))]
+    n5 = bad5 = nfb = nst5 = 0
+    f8 = lambda x: ref.float8(fb(x))
+    for si in list(range(3, len(SS), 23 if quick else 11))[:12 if quick else 30]:
+        n, S0 = SS[si]
+        if n.startswith('sparse'): continue
+        for av, tv, sv in valid:
+            na, nt, ns = f8(av), f8(tv), f8(sv)
+            e = 32 * (na + nt - ns)
+            if not -1800 <= e <= 3100: continue
+            S = dict(S0); S['g68'] = S['g6e'] = 0x2000
+            gl, _ = Fw(V7).run(S, 0, r2=0, rec=(fb(av), fb(tv), fb(sv)))
+            Ss = dict(S, v24=32 * na, e30=e)
+            gs, _ = Fw(V7).run(Ss, 0, r2=STILL)
+            a5 = ref_args(Ss); want = ref.awbml_ref(TAB, *a5, 0)
+            n5 += 1
+            if want is not None and (gl[0], gl[3]) != want: bad5 += 1; bad.append(('live with record != ref', n, (av, tv, sv), gl, want))
+            if gl != gs: bad5 += 1; bad.append(('live with record != still with the same exposure', n, (av, tv, sv), gl, gs))
+            if want is None: nfb += 1
+            gc.collect()
+        g81_l, _ = Fw(V81).run(S0, 0, r2=0)
+        g81_s, _ = Fw(V81).run(S0, 0, r2=STILL)
+        for words in rejects:
+            gl, _ = Fw(V7).run(S0, 0, r2=0, rec=words)
+            n5 += 1
+            if gl != g81_l: bad5 += 1; bad.append(('rejected record: live != 8.1', n, words, gl, g81_l))
+        gl, _ = Fw(V7).run(S0, 0, r2=0)                           # S[0] outside RAM (the emulator's default test layout)
+        n5 += 1
+        if gl != g81_l: bad5 += 1; bad.append(('S[0] out of RAM: live != 8.1', n, gl, g81_l))
+        for words in (valid[0], rejects[1]):
+            ws = tuple(fb(x) if isinstance(x, float) else x for x in words)
+            gs, _ = Fw(V7).run(S0, 0, r2=STILL, rec=ws)
+            nst5 += 1
+            if gs != g81_s: bad5 += 1; bad.append(('still with a record != 8.1', n, gs, g81_s))
+        for mode in (1, 2):                                       # the other modes are untouched
+            gl, _ = Fw(V7).run(S0, mode, r2=0, rec=(fb(4.0), fb(7.0), fb(7.5)))
+            g8, _ = Fw(V81).run(S0, mode, r2=0)
+            if gl != g8: bad5 += 1; bad.append(('mode != 0 differs from 8.1', n, mode))
+        gc.collect()
+    print(f'5. live view exposure from the record: {n5} live calls ({nfb} valid ones with a fallback result), {nst5} stills; mismatches {bad5} '
+          f'(valid triple == still with the equivalent e30 == ref; rejected / out of RAM == 8.1 live; stills and modes 1, 2 == 8.1)')
     # ---- 3. instruction counts (unicorn) on a few scenes: the camera's own Auto estimate, ours computing / cached / leaving
     pick = [SS[i % len(SS)] for i in (0, 10, 36, 80, 140, 200, len(SS) - 30, len(SS) - 5)]
     for n, S in pick:

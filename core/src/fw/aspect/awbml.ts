@@ -69,8 +69,13 @@ const ZERO_FILL_END = 0x53000460;
 /** ctx flag: a gain override also clears Auto+0xAF89 (the camera's all-zero-sums hold flag, read by the live view smoother). On: its only reader is the live view smoother. */
 export const AWBML_AF89 = 1;
 
-/** ctx word, live view only: 1 = the exposure data in S (v24 = 0, e30 from a record word nothing writes) is treated as missing, the same as the camera's no-exposure marker; 0 = use S+0x30 as it is. Stills always use S. */
-export const AWBML_LV_EXP = 1;
+/**
+ * ctx word, live view only (stills always use S): where the exposure comes from.
+ * 0 = use S as it is; 1 = treat the exposure as missing (the camera's no-exposure marker); 2 = read the scene brightness from the live view record,
+ * three IEEE floats in APEX half-stop units at S[0] - 0x4D2C0 + 0x38D20 (Av), +0x38D24 (Tv), +0x38D28 (Sv), so the preview's gains see the same
+ * brightness the photo gets. Anything unusable (S[0] misaligned or outside RAM, NaN, infinity, all zero, values out of range) falls back to 1.
+ */
+export const AWBML_LV_EXP = 2;
 
 /** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot; the period, the AF89 flag, and the live view exposure mode follow them. */
 const TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL', 'KF', 'LN'] as const;

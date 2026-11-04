@@ -453,6 +453,34 @@ def observe(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode):
     return u, v, o[2], o[3]
 
 
+def float8(b):
+    """trunc(8 x) of the float with bits b, or None for a NaN, an infinity or |x| >= 2^14 (as the C code, integer only)."""
+    e, m = (b >> 23) & 255, (b & 0x7FFFFF) | 0x800000
+    if e == 255 or e > 127 + 13:
+        return None
+    v = 0 if e == 0 else (m << (e - 147) if e >= 147 else (0 if 147 - e >= 32 else m >> (147 - e)))
+    return -v if b >> 31 else v
+
+
+def lv_exposure(s0, rd32, lo=0x55000000, hi=0x60000000):
+    """The live view's exposure from the record at S[0] - 0x4D2C0 (floats Av, Tv, Sv at +0x38D20 / 24 / 28 in APEX half stops):
+    (v24, e30), or None when the record is not usable (the exposure is then treated as missing). rd32(addr) reads a word."""
+    p = (s0 - 0x4D2C0) & 0xFFFFFFFF
+    if s0 & 3 or p < lo or p >= hi or p + 0x38D2C > hi:
+        return None
+    w = [rd32(p + 0x38D20), rd32(p + 0x38D24), rd32(p + 0x38D28)]
+    if not any(w):
+        return None
+    n = [float8(x) for x in w]
+    if None in n:
+        return None
+    na, nt, ns = n
+    if not (8 <= na <= 80 and -40 <= nt <= 120 and 24 <= ns <= 120):
+        return None
+    e = 32 * (na + nt - ns)
+    return (32 * na, e) if -1800 <= e <= 3100 else None
+
+
 def scale_gain(g, s):
     """At capture the R and B gain words S+0x68 / S+0x6E carry the camera's per-unit factor: (g * s + 0x1000) >> 13, at most 0xFFFF
     (a zero word is left alone), as the C code."""
@@ -508,7 +536,7 @@ class AwbmlSeq:
 
     counts = dict.fromkeys(['observations', 'first', 'scene resets', 'candidate frames held', 'R_post clamped at R_max (either axis)', 'confident (both axes R_eff below R_conf)'], 0)
 
-    def __init__(self, T, period=PERIOD, lv_exp=1):
+    def __init__(self, T, period=PERIOD, lv_exp=2):
         self.T, self.period, self.lv_exp = T, period, lv_exp
         self.buf = False
         self.valid = False
@@ -518,7 +546,7 @@ class AwbmlSeq:
         self.allocs = 0
         self.state = None
 
-    def call(self, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, alloc_ok=True, still=False, still_s=None):
+    def call(self, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, alloc_ok=True, still=False, still_s=None, lv_ev=None):
         """still: the estimate's third argument is non-zero: a fresh single-frame estimate that touches no live view state
         (it may create the buffer, as the C code does)."""
         if mode != 0:
@@ -539,7 +567,9 @@ class AwbmlSeq:
             self.left -= 1
             return None if self.fb else self.g
         self.valid, self.fb, self.left = True, True, self.period - 1 if self.period > 1 else 0
-        if self.lv_exp:
+        if self.lv_exp == 2 and lv_ev is not None:
+            v24, e30 = lv_ev                          # live view: the exposure from the record (lv_exposure())
+        elif self.lv_exp:
             v24 = -0x880                              # live view: the exposure data is treated as missing
         o = observe(self.T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode)
         if o is None:

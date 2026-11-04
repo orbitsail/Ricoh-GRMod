@@ -39,10 +39,61 @@ def load(path):
     return lib
 
 
-def pack_case(R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, rng):
+HOST_LO, HOST_HI = 0x10000, 0x100000
+
+
+def f32bits(x):
+    return struct.unpack('<I', struct.pack('<f', x))[0]
+
+
+def rec_words(rng):
+    """(label, three float words Av, Tv, Sv) for the fake live view record: valid triples and every rejection path."""
+    k = rng.choice(['valid'] * 8 + ['zero', 'nan', 'inf', 'denorm', 'neg', 'big', 'avlo', 'avhi', 'tvlo', 'tvhi', 'svlo', 'svhi', 'e30hi', 'e30lo', 'part0', 'negzero', 'edge', 'exact'])
+    av, tv, sv = rng.uniform(1, 10), rng.uniform(-5, 15), rng.uniform(3, 15)
+    if k == 'valid':
+        if rng.random() < 0.5:
+            av, tv, sv = (round(x * 2) / 2 for x in (av, tv, sv))
+        tv = float(np.clip(sv - av + rng.uniform(-3, 3), -5, 15))      # e30 mostly in range
+    w = [f32bits(av), f32bits(tv), f32bits(sv)]
+    if k == 'exact':
+        w = [f32bits(x) for x in (rng.choice([1.0, 5.0, 10.0]), rng.choice([-5.0, 0.0, 15.0, 7.125]), rng.choice([3.0, 8.0, 15.0]))]
+    elif k == 'zero':
+        w = [0, 0, 0]
+    elif k == 'part0':
+        w = [0, f32bits(tv), f32bits(sv)]
+    elif k == 'nan':
+        w[int(rng.integers(0, 3))] = int(rng.choice([0x7FC00000, 0xFFC00001, 0x7F800001]))
+    elif k == 'inf':
+        w[int(rng.integers(0, 3))] = int(rng.choice([0x7F800000, 0xFF800000]))
+    elif k == 'denorm':
+        w[int(rng.integers(0, 3))] = int(rng.choice([1, 0x7FFFFF, 0x80000001, 0x00400000]))
+    elif k == 'neg':
+        i = int(rng.integers(0, 3)); w[i] = f32bits(-abs(rng.uniform(0.1, 20)))
+    elif k == 'negzero':
+        w[int(rng.integers(0, 3))] = 0x80000000
+    elif k == 'big':
+        w[int(rng.integers(0, 3))] = f32bits(float(rng.choice([16384.0, 1e6, 3e38, 2.0 ** 14 - 1])))
+    elif k in ('avlo', 'avhi', 'tvlo', 'tvhi', 'svlo', 'svhi'):
+        i = {'a': 0, 't': 1, 's': 2}[k[0]]
+        bad = {'avlo': (0.0, 0.99), 'avhi': (10.2, 20), 'tvlo': (-9, -5.2), 'tvhi': (15.2, 30), 'svlo': (0.5, 2.9), 'svhi': (15.2, 30)}[k]
+        w[i] = f32bits(rng.uniform(*bad))
+    elif k == 'e30hi':
+        w = [f32bits(10.0), f32bits(15.0), f32bits(3.0)]
+    elif k == 'e30lo':
+        w = [f32bits(1.0), f32bits(-5.0), f32bits(15.0)]
+    elif k == 'edge':
+        w = [f32bits(float(rng.choice([1.0, 10.0, 10.125]))), f32bits(float(rng.choice([-5.0, 15.0, -5.125, 15.125]))), f32bits(float(rng.choice([3.0, 15.0, 2.875, 15.125])))]
+    return k, w
+
+
+def pack_case(R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, rng, rec=None):
     arrs = [np.asarray(a).astype('<u4') for a in (R, Gr, Gb, B, cnt)]
     n = len(arrs[0])
     mem = bytearray()
+    if rec is not None:                      # rec = (P, words): S[0] = P + 0x4D2C0 and the three record words at P + 0x38D20
+        P, words = rec
+        mem += bytes(P + 0x4D2C0)
+        struct.pack_into('<3I', mem, P + 0x38D20, *words)
     ptrs = []
     for a in arrs:
         ptrs.append(len(mem)); mem += a.tobytes()
@@ -217,7 +268,7 @@ def main():
             for sq in range(n):
                 period = int(rng.choice([ref.PERIOD] * 4 + [1, 2]))
                 af89 = int(rng.random() < 0.7)
-                lv_exp = int(rng.random() < 0.6)
+                lv_exp = int(rng.choice([0, 1, 2, 2, 2]))
                 seq = ref.AwbmlSeq(tab_x, period, lv_exp)
                 shadow = ref.AwbmlSeq(tab_x, period, lv_exp)          # the same live view calls without the stills
                 still_p = float(rng.choice([0.0, 0.3, 0.3, 0.6]))
@@ -238,15 +289,24 @@ def main():
                     still = int(rng.random() < still_p)
                     fail = step < 2 and rng.random() < 0.2 and not seq.buf
                     any_fail |= fail
-                    mem, s_off, obj, a_ = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng)
+                    rec = None
+                    if lv_exp == 2 and rng.random() < 0.7:
+                        P = int(rng.choice([HOST_LO, 0x20000, 0x30000, 0x30000, 0x8000, 0x4000, HOST_HI - 0x38D2C, HOST_HI - 0x38D2C + 4, HOST_HI - 0x30000, 0xA0000, 0x70000]))
+                        rec = (P, rec_words(rng)[1])
+                    mem, s_off, obj, a_ = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng, rec=rec)
                     ia = [x.astype(np.int64) for x in a_]
                     pa = (p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'])
                     sm = s68_6e(mem, s_off)
-                    want = seq.call(*ia, *pa, alloc_ok=not fail, still=bool(still), still_s=sm)
+                    lv_ev = ref.lv_exposure(struct.unpack_from('<I', mem, s_off)[0], lambda a: struct.unpack_from('<I', mem, a)[0], HOST_LO, HOST_HI)
+                    stats.setdefault('lv record usable', [0, 0])
+                    if not still and lv_exp == 2:
+                        stats['lv record usable'][0] += 1
+                        stats['lv record usable'][1] += lv_ev is None
+                    want = seq.call(*ia, *pa, alloc_ok=not fail, still=bool(still), still_s=sm, lv_ev=lv_ev)
                     if still:       # (a) a still equals the single-call reference on its own stats, whatever came before
                         assert want == (None if fail else ref.awbml_ref(tab_x, *ia, *pa, still_s=sm))
                     else:           # (b) live view is unaffected by the stills
-                        wsh = shadow.call(*ia, *pa, alloc_ok=not fail)
+                        wsh = shadow.call(*ia, *pa, alloc_ok=not fail, lv_ev=lv_ev)
                         assert fail or wsh == want, (sq, step, wsh, want)
                     steps.append((mem, s_off, obj, fail, still, want, step))
                     for name, r in runners_x.items():

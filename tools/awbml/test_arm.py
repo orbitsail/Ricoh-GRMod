@@ -14,7 +14,7 @@ from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_AR
 import gen
 import ref
 import scenes
-from test_host import OBJ_SIZE, gen_random, pack_case
+from test_host import OBJ_SIZE, gen_random, pack_case, rec_words, HOST_LO, HOST_HI
 
 CODE, BLOB, CTX, MEM, OBJ, STACK, HEAP, STUB = 0x10000000, 0x20000000, 0x30000000, 0x40000000, 0x50000000, 0x60000000, 0x70000000, 0x80000000
 
@@ -27,7 +27,7 @@ def build_code(extra=()):
 
 def main(n_scenes=40, n_random=80):
     tab, blob, offs = ref.build_tables()
-    code = build_code()
+    code = build_code(('-DAWBML_RAM_LO=0x%08Xu' % (MEM + HOST_LO), '-DAWBML_RAM_HI=0x%08Xu' % (MEM + HOST_HI)))   # the test's RAM window for the live view record
     rng = np.random.default_rng(777)
     uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
     for base, size in ((CODE, 0x10000), (BLOB, 0x20000), (CTX, 0x1000), (MEM, 0x400000), (OBJ, 0x10000), (STACK, 0x10000), (HEAP, 0x20000), (STUB, 0x1000)):
@@ -83,10 +83,11 @@ def main(n_scenes=40, n_random=80):
     # sequences with the build's period and the temporal filter: the scratch buffer stays, ref.AwbmlSeq is the model
     uc.mem_write(CTX + 4 * (len(ctx) - 3), struct.pack('<I', ref.PERIOD))
     sbad = scalls = 0
+    nrec = [0]
     pool = [c for c in cases[:n_scenes + 6]]
     for q in range(12):
         af89 = q % 2
-        lv = int(rng.random() < 0.6)
+        lv = int(rng.choice([0, 1, 2, 2, 2]))
         uc.mem_write(CTX + 4 * (len(ctx) - 2), struct.pack('<I', af89))
         uc.mem_write(CTX + 4 * (len(ctx) - 1), struct.pack('<I', lv))
         seq = ref.AwbmlSeq(tab, ref.PERIOD, lv)
@@ -101,10 +102,16 @@ def main(n_scenes=40, n_random=80):
             last = (arrs, dict(p))
             p['mode'] = int(rng.choice([0] * 9 + [1, 2]))
             still = int(rng.random() < 0.3)
-            mem, s_off, obj, a = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng)
+            rec = None
+            if lv == 2 and rng.random() < 0.75:
+                P = int(rng.choice([HOST_LO, 0x20000, 0x30000, 0x30000, 0x8000, 0x4000, HOST_HI - 0x38D2C, HOST_HI - 0x38D2C + 4, 0xA0000, 0x70000]))
+                rec = (P, rec_words(rng)[1])
+            mem, s_off, obj, a = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng, rec=rec)
             mem = bytearray(mem)
             for k in range(5):
                 struct.pack_into('<I', mem, s_off + 4 * k, MEM + struct.unpack_from('<I', mem, s_off + 4 * k)[0])
+            lv_ev = ref.lv_exposure(struct.unpack_from('<I', mem, s_off)[0], lambda ad: struct.unpack_from('<I', mem, ad - MEM)[0], MEM + HOST_LO, MEM + HOST_HI)
+            nrec[0] += lv_ev is not None
             uc.mem_write(MEM, bytes(mem)); uc.mem_write(OBJ, obj)
             uc.reg_write(UC_ARM_REG_R0, CTX); uc.reg_write(UC_ARM_REG_R1, OBJ); uc.reg_write(UC_ARM_REG_R2, MEM + s_off); uc.reg_write(UC_ARM_REG_R3, still * 0x12345)
             uc.reg_write(UC_ARM_REG_SP, STACK + 0x10000); uc.reg_write(UC_ARM_REG_LR, STUB + 8)
@@ -115,7 +122,7 @@ def main(n_scenes=40, n_random=80):
             if region_a is not None and bytes(uc.mem_read(HEAP, 35468)) != region_a :
                 sbad += 1; print('STILL WROTE THE LIVE VIEW REGION')
             got = None if o == obj else (struct.unpack_from('<H', o, 4)[0], struct.unpack_from('<H', o, 0xA)[0])
-            want = seq.call(*[x.astype(np.int64) for x in a], p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], still=bool(still), still_s=(struct.unpack_from('<H', mem, s_off + 0x68)[0], struct.unpack_from('<H', mem, s_off + 0x6E)[0]))
+            want = seq.call(*[x.astype(np.int64) for x in a], p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], still=bool(still), still_s=(struct.unpack_from('<H', mem, s_off + 0x68)[0], struct.unpack_from('<H', mem, s_off + 0x6E)[0]), lv_ev=lv_ev)
             scalls += 1
             if want is None:
                 if o[0xAF89] != obj[0xAF89]: sbad += 1; print('AF89 touched without a result')
@@ -125,7 +132,7 @@ def main(n_scenes=40, n_random=80):
                 sbad += 1; print('AF89 changed while off')
             if got != want:
                 sbad += 1; print('SEQ MISMATCH', got, want)
-    print(f'ARM (unicorn) sequences (period {ref.PERIOD}, temporal filter, interleaved stills, AF89 on/off): {scalls} calls, {sbad} mismatches')
+    print(f'ARM (unicorn) sequences (period {ref.PERIOD}, temporal filter, interleaved stills, AF89 on/off, live view exposure modes 0/1/2): {scalls} calls ({nrec[0]} with a usable record), {sbad} mismatches')
     bad += sbad
     sys.exit(1 if bad else 0)
 

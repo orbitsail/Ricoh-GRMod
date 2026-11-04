@@ -62,7 +62,8 @@ struct awbml_ctx {
   const u32 *ln;                /* [257] */
   u32 period;                   /* live view: compute on every period-th call (1: always) */
   u32 af89;                     /* nonzero: a gain override also clears Auto+0xAF89 (the camera's all-zero-sums hold flag) */
-  u32 lv_exp;                   /* live view only: 1 = the exposure data (S+0x24 / S+0x30) is not usable and is treated as missing, 0 = use it */
+  u32 lv_exp;                   /* live view only: 0 = use S+0x24 / S+0x30; 1 = treat the exposure data as missing; 2 = read the exposure from the live view record
+                                   (floats at S[0] - 0x4D2C0 + 0x38D20), else as 1 */
 };
 
 struct scratch {
@@ -546,6 +547,50 @@ static u32 scale_gain(u32 g, u32 s) {
   return o > 0xFFFF ? 0xFFFF : o;
 }
 
+/* Live view record (S[0] = record + 0x4D2C0): Av, Tv, Sv as IEEE floats in APEX half-stop units at +0x38D20 / 24 / 28. */
+#ifndef AWBML_RAM_LO
+#ifdef AWBML_HOST
+#define AWBML_RAM_LO 0x10000u   /* host tests: addresses are offsets into the test memory */
+#define AWBML_RAM_HI 0x100000u
+#else
+#define AWBML_RAM_LO 0x55000000u
+#define AWBML_RAM_HI 0x60000000u
+#endif
+#endif
+#ifdef AWBML_HOST
+#define REC32(p) (*(const u32 *)(awbml_host_base + (p)))
+#else
+#define REC32(p) (*(const u32 *)(p))
+#endif
+
+/* trunc(8 x) of the float with bits b, or a rejection (-1) for a NaN, an infinity, or |x| >= 2^14; the integer part is
+ * returned through *n (sign handled). Zero and denormals give 0. */
+static int float8(u32 b, i32 *n) {
+  u32 e = (b >> 23) & 255, m = (b & 0x7FFFFFu) | 0x800000u, v;
+  if (e == 255 || e > 127 + 13) return -1;
+  if (e == 0) v = 0;
+  else if (e >= 147) v = m << (e - 147);
+  else if (147 - e >= 32) v = 0;
+  else v = m >> (147 - e);
+  *n = (b >> 31) ? -(i32)v : (i32)v;
+  return 0;
+}
+
+/* The live view's exposure: v24 = 32 n(Av), e30 = 32 (n(Av) + n(Tv) - n(Sv)); 0 on success, -1 when the record is not usable. */
+static int lv_exposure(const unsigned char *S, i32 *v24, i32 *e30) {
+  u32 s0 = rd32(S), p = s0 - 0x4D2C0u, wa, wt, ws;
+  i32 na, nt, ns, e;
+  if ((s0 & 3) || p < AWBML_RAM_LO || p >= AWBML_RAM_HI || p + 0x38D2Cu > AWBML_RAM_HI) return -1;
+  wa = REC32(p + 0x38D20u); wt = REC32(p + 0x38D24u); ws = REC32(p + 0x38D28u);
+  if (!(wa | wt | ws)) return -1;
+  if (float8(wa, &na) || float8(wt, &nt) || float8(ws, &ns)) return -1;
+  if (na < 8 || na > 80 || nt < -40 || nt > 120 || ns < 24 || ns > 120) return -1;
+  e = 32 * (na + nt - ns);
+  if (e < -1800 || e > 3100) return -1;
+  *v24 = 32 * na; *e30 = e;
+  return 0;
+}
+
 static void put_gains(const struct awbml_ctx *ctx, unsigned char *obj, u32 g0, u32 g3, const unsigned char *S) {
   if (S) {                                        /* a still; live view is left as it is */
     g0 = scale_gain(g0, rd16(S + 0x68));
@@ -572,7 +617,7 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   }
   stride = rd16(S + 0x14); x0 = rd16(S + 0x1c); y0 = rd16(S + 0x1e); w = rd16(S + 0x20); h = rd16(S + 0x22);
   v24 = (i32)rd32(S + 0x24); e30 = (i32)rd32(S + 0x30);
-  if (!is_still && ctx->lv_exp) v24 = -0x880;     /* live view: no usable exposure data */
+  if (!is_still && ctx->lv_exp && !(ctx->lv_exp == 2 && !lv_exposure(S, &v24, &e30))) v24 = -0x880;   /* live view: the record's exposure, else none */
   if (w < 1 || w > 64 || h < 1 || h > 64) return;
   if ((u64)(y0 + h - 1) * stride + x0 + w > (1u << 24)) return;
   if (!*ctx->slot) { *ctx->slot = ctx->alloc(2 * AWBML_SCRATCH_BYTES); fresh = 1; }
