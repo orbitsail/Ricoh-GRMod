@@ -26,6 +26,8 @@ class Bridge:
         return np.array(self.call(op='cam')['cam']).reshape(-1, 3)
     def fit_target(self, target, title=''):
         return self.call(op='fitTarget', target=np.asarray(target).ravel().tolist(), title=title)
+    def fit_pairs(self, source, target, title=''):
+        return self.call(op='fitPairs', source=np.asarray(source).ravel().tolist(), target=np.asarray(target).ravel().tolist(), title=title)
     def fit_cube(self, path, base='ricoh'):
         return self.call(op='fitCube', path=path, base=base)
     def fit_cube_text(self, text, base='ricoh'):

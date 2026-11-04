@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAL_ADOBE, CAL_CAM, applyCube, convertCube, convertTarget, convertXmp, parseCube, deltaE2000Lab, lab, slotApply } from '../src/color/index';
+import { CAL_ADOBE, CAL_CAM, applyCube, convertCube, convertTarget, convertPairs, convertXmp, parseCube, deltaE2000Lab, lab, slotApply } from '../src/color/index';
 import { percentile } from '../src/color/math';
 import { encodeTableText, makeRgbTable, nameXml, xmpDoc } from './color-helpers/xmp-encode';
 
@@ -54,5 +54,16 @@ describe('convertCube base', () => {
     expect(b.params).toEqual(a.params);
     expect(b.meanDE2000).toBe(a.meanDE2000);
     expect(() => convertTarget(new Float64Array(30))).toThrow();
+  });
+
+  it('convertPairs on (CAL_CAM, target) equals convertTarget and takes any length', () => {
+    const target = applyCube(parseCube(warm), Float64Array.from(CAL_ADOBE));
+    const a = convertTarget(target);
+    const b = convertPairs(Float64Array.from(CAL_CAM), target);
+    expect(b.params).toEqual(a.params);
+    const half = CAL_CAM.length / 2 - ((CAL_CAM.length / 2) % 3);
+    const c = convertPairs(Float64Array.from(CAL_CAM).subarray(0, half), target.subarray(0, half));
+    expect(c.meanDE2000).toBeLessThan(10);
+    expect(() => convertPairs(new Float64Array(30), new Float64Array(33))).toThrow();
   });
 });

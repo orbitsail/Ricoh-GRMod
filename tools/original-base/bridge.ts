@@ -3,13 +3,14 @@
 //   {op:"cam"}                          -> {cam}                     CAL_CAM (1026 x 3, flat)
 //   {op:"adobe"}                       -> {adobe}                   CAL_ADOBE
 //   {op:"fitTarget", target, title?}    -> {params, meanDE2000, p95DE2000, meanDE, p95DE}   convertTarget
+//   {op:"fitPairs", source, target, title?} -> same, convertPairs (any N x 3 Standard colours -> target)
 //   {op:"fitCube", path, base}          -> same, convertCube(file, {base})
 //   {op:"fitCubeText", text, base}      -> same
 //   {op:"apply", params, rgb}           -> {out}                     slotApply
 //   {op:"de2000", a, b}                 -> {d}                       per-colour CIEDE2000 between two flat sRGB buffers
 //   {op:"cube", path, rgb}              -> {out}                     applyCube (trilinear/tetra as GR Mod does)
 import { readFileSync } from 'node:fs';
-import { CAL_ADOBE, CAL_CAM, convertCube, convertTarget, deltaE2000Lab, lab, slotApply } from '../../core/src/color/index';
+import { CAL_ADOBE, CAL_CAM, convertCube, convertPairs, convertTarget, deltaE2000Lab, lab, slotApply } from '../../core/src/color/index';
 import { applyCube, parseCube } from '../../core/src/color/cube';
 
 const req = JSON.parse(readFileSync(0, 'utf8'));
@@ -23,6 +24,7 @@ switch (req.op) {
   case 'cam': res = { cam: Array.from(CAL_CAM) }; break;
   case 'adobe': res = { adobe: Array.from(CAL_ADOBE) }; break;
   case 'fitTarget': res = fromConv(convertTarget(Float64Array.from(req.target), { title: req.title })); break;
+  case 'fitPairs': res = fromConv(convertPairs(Float64Array.from(req.source), Float64Array.from(req.target), { title: req.title })); break;
   case 'fitCube': res = fromConv(convertCube(readFileSync(req.path, 'utf8'), { base: req.base })); break;
   case 'fitCubeText': res = fromConv(convertCube(req.text, { base: req.base })); break;
   case 'apply': res = { out: Array.from(slotApply(toParams(req.params), Float64Array.from(req.rgb))) }; break;

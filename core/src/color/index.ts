@@ -12,7 +12,7 @@ export { fitSlot } from './fit';
 export { refineSlot } from './refine';
 export type { RefineOptions, RefineResult } from './refine';
 export type { FitOptions, FitResult } from './fit';
-export { convertXmp, convertCube, convertTarget, previewSlot } from './convert';
+export { convertXmp, convertCube, convertTarget, convertPairs, previewSlot } from './convert';
 export type { Conversion, ConvertOptions } from './convert';
 export { BASE_CURVE, CAL_CAM, CAL_ADOBE, CAL_COUNT, TONE_PARAMS } from './data';
 export { clarityLevels, simulateClarity } from './clarity';

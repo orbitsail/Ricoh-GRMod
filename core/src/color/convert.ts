@@ -292,13 +292,24 @@ export function guardedRefine(cube: ReturnType<typeof parseCube>, start: SlotPar
  */
 export function convertTarget(target: Float64Array, opts?: ConvertOptions & { title?: string }): Conversion {
   if (target.length !== CAL_CAM.length) throw new Error(`target must have ${CAL_CAM.length} values (1026 x 3)`);
+  return convertPairs(Float64Array.from(CAL_CAM), target, opts);
+}
+
+/**
+ * Like `convertTarget`, but for any set of colours: `source` is what the camera's own Standard preset
+ * outputs for them and `target` the rendering wanted (both N x 3 display values, same length). Same
+ * model and options as `convertTarget`; errors are reported on the given colours.
+ */
+export function convertPairs(source: Float64Array, target: Float64Array, opts?: ConvertOptions & { title?: string }): Conversion {
+  if (source.length !== target.length || source.length === 0 || source.length % 3 !== 0)
+    throw new Error('source and target must be equally long N x 3 buffers');
   opts?.onProgress?.(0.1);
-  const fit = fitSlot(Float64Array.from(CAL_CAM), target, { onProgress: subProgress(opts, 0.1, 1), post: opts?.post !== false });
+  const fit = fitSlot(source, target, { onProgress: subProgress(opts, 0.1, 1), post: opts?.post !== false });
   return {
     kind: 'cube',
     title: opts?.title ?? '',
     params: fit.P2 ? { M1: fit.M1, ck: fit.ck, P2: fit.P2 } : { M1: fit.M1, ck: fit.ck },
-    ...report(slotApply(fit, Float64Array.from(CAL_CAM)), target),
+    ...report(slotApply(fit, source), target),
     warnings: [],
     unsupported: [],
   };

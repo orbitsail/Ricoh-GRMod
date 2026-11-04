@@ -39,3 +39,17 @@ GR Mod imports .cube files with the 'ricoh' convention (the LUT acts on Standard
 is written as a 33^3 cube whose entry at grid point P is `slotApply(slot, P)` and re-imported with `convertCube` to check it
 reproduces the slot (mean CIEDE2000 on CAL_CAM, printed by `run_all.py`).
 Slots: `<out>/slots/{current,adobe,original}/NN Name.json` ({M1, ck, P2} under `params`, plus fit errors).
+
+## Real-raw version (`run_real.py`, `realscene.py`)
+
+`cal_scene.json` turned out about 2.5x under-saturated, so `run_real.py` replaces it with real data: `/home/claude/work/dngcheck/pairs.json`
+(block means of 10 GR IV DNGs: `scene_linear_prophoto_d50` colorimetric from each DNG's own ColorMatrix, and the camera's Standard JPEG `jpeg_srgb`).
+
+    python3 run_real.py [--out /home/claude/work/out2] [--cur /home/claude/work/out] [--src <LUT folder>] [--prev <photos>]
+
+* Training set: stratified by JPEG CIELAB hue (12) x L* (5) x chroma (3) with a common cell cap, plus up to 300 near-neutrals; two whole images are held out
+  as the test set (`choose_holdout`: the pair of images whose hue histogram / chroma best match the pool).
+* k: one global gain on the scene so FLog2_to_PROVIA(F-Log2(k*scene)) matches the JPEG L* on near-neutral pairs, L* 25..75.
+* Fit: `convertPairs(source, target)` (core/src/color/convert.ts; `convertTarget` is now `convertPairs(CAL_CAM, target)`), bridge op `fitPairs`.
+  Errors are CIEDE2000 of `slotApply(slot, JPEG colours)` against the original-LUT target, on train and on the held-out images.
+* Compare / cubes / sheets as above, written to `--out`. The data covers little red, magenta, cyan: those sectors are extrapolated by the fit.
