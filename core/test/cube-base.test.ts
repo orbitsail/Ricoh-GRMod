@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAL_ADOBE, CAL_CAM, convertCube, convertXmp, deltaE2000Lab, lab, slotApply } from '../src/color/index';
+import { CAL_ADOBE, CAL_CAM, applyCube, convertCube, convertTarget, convertXmp, parseCube, deltaE2000Lab, lab, slotApply } from '../src/color/index';
 import { percentile } from '../src/color/math';
 import { encodeTableText, makeRgbTable, nameXml, xmpDoc } from './color-helpers/xmp-encode';
 
@@ -46,5 +46,13 @@ describe('convertCube base', () => {
     const res = convertCube(warm, { base: 'adobe', refine: true });
     expect(res.refined).toBeUndefined();
     expect(res.warnings.length).toBe(1);
+  });
+
+  it('convertTarget on cube(CAL_ADOBE) equals the adobe cube path', () => {
+    const a = convertCube(warm, { base: 'adobe' });
+    const b = convertTarget(applyCube(parseCube(warm), Float64Array.from(CAL_ADOBE)));
+    expect(b.params).toEqual(a.params);
+    expect(b.meanDE2000).toBe(a.meanDE2000);
+    expect(() => convertTarget(new Float64Array(30))).toThrow();
   });
 });

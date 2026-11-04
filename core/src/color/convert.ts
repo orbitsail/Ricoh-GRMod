@@ -285,6 +285,26 @@ export function guardedRefine(cube: ReturnType<typeof parseCube>, start: SlotPar
 }
 
 /**
+ * Fit a slot to an arbitrary target rendering of the 1026 calibration colours: `target` is
+ * 1026 x 3 display (sRGB-encoded) values, the rendering the camera should produce for the colours
+ * CAL_CAM (what its own Standard preset outputs for them). This is the 'adobe' path of
+ * `convertCube` / `convertXmp` with the target given. Errors are reported on those 1026 colours.
+ */
+export function convertTarget(target: Float64Array, opts?: ConvertOptions & { title?: string }): Conversion {
+  if (target.length !== CAL_CAM.length) throw new Error(`target must have ${CAL_CAM.length} values (1026 x 3)`);
+  opts?.onProgress?.(0.1);
+  const fit = fitSlot(Float64Array.from(CAL_CAM), target, { onProgress: subProgress(opts, 0.1, 1), post: opts?.post !== false });
+  return {
+    kind: 'cube',
+    title: opts?.title ?? '',
+    params: fit.P2 ? { M1: fit.M1, ck: fit.ck, P2: fit.P2 } : { M1: fit.M1, ck: fit.ck },
+    ...report(slotApply(fit, Float64Array.from(CAL_CAM)), target),
+    warnings: [],
+    unsupported: [],
+  };
+}
+
+/**
  * Convert a .cube LUT. The LUT is taken to act on an sRGB display image, so the target is simply
  * cube(P) where P are colours as output by the camera's Standard preset. The fit uses
  * `cubeFitSamplesExpanded` (the calibration and synthetic colours plus a dense grey ramp, a 9^3
@@ -297,15 +317,12 @@ export function convertCube(text: string, opts?: ConvertOptions): Conversion {
   if (opts?.base === 'adobe') {
     // like convertXmp: the LUT acts on Adobe Standard, the camera starts from its own Standard
     const target = applyCube(cube, Float64Array.from(CAL_ADOBE));
-    opts.onProgress?.(0.1);
-    const fit = fitSlot(Float64Array.from(CAL_CAM), target, { onProgress: subProgress(opts, 0.1, 1), post: opts.post !== false });
+    const res = convertTarget(target, opts);
     return {
+      ...res,
       kind: 'cube',
       title: cube.title,
-      params: fit.P2 ? { M1: fit.M1, ck: fit.ck, P2: fit.P2 } : { M1: fit.M1, ck: fit.ck },
-      ...report(slotApply(fit, Float64Array.from(CAL_CAM)), target),
       warnings: opts.refine === true ? ['refine is not available with the Adobe base and was skipped'] : [],
-      unsupported: [],
     };
   }
   const P = cubeFitSamplesExpanded();
