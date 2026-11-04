@@ -35,7 +35,7 @@ def load(path):
     lib = ctypes.CDLL(str(path))
     lib.host_run.restype = ctypes.c_int
     lib.host_run.argtypes = [ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
-                             ctypes.c_uint, ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint]
+                             ctypes.c_uint, ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint]
     return lib
 
 
@@ -125,9 +125,9 @@ class Runner:
         self.offs = (ctypes.c_uint * len(ref.TABLE_ORDER))(*[offs[n] for n in ref.TABLE_ORDER])
         self.first = True
 
-    def run(self, mem, s_off, obj, fail_alloc=0, period=1, reset=None, still=0, af89=0, lv_exp=0):
+    def run(self, mem, s_off, obj, fail_alloc=0, period=1, reset=None, still=0, af89=0, lv_exp=0, lv_scale=0):
         out = ctypes.create_string_buffer(OBJ_SIZE)
-        na = self.lib.host_run(mem, len(mem), s_off, obj, out, self.blob, len(self.blob), self.offs, fail_alloc, fail_alloc if reset is None else reset, period, af89, still, lv_exp)
+        na = self.lib.host_run(mem, len(mem), s_off, obj, out, self.blob, len(self.blob), self.offs, fail_alloc, fail_alloc if reset is None else reset, period, af89, still, lv_exp, lv_scale)
         assert na <= 1
         o = out.raw
         if o == obj:
@@ -269,8 +269,10 @@ def main():
                 period = int(rng.choice([ref.PERIOD] * 4 + [1, 2]))
                 af89 = int(rng.random() < 0.7)
                 lv_exp = int(rng.choice([0, 1, 2, 2, 2]))
-                seq = ref.AwbmlSeq(tab_x, period, lv_exp)
-                shadow = ref.AwbmlSeq(tab_x, period, lv_exp)          # the same live view calls without the stills
+                lv_scale = int(rng.random() < 0.75)
+                unity = lv_scale and rng.random() < 0.25      # all S words 0x2000: the C code (lv_scale on) must equal the unscaled model (lv_scale off, as final3)
+                seq = ref.AwbmlSeq(tab_x, period, lv_exp, 0 if unity else lv_scale)
+                shadow = ref.AwbmlSeq(tab_x, period, lv_exp, 0 if unity else lv_scale)          # the same live view calls without the stills
                 still_p = float(rng.choice([0.0, 0.3, 0.3, 0.6]))
                 last = None
                 steps = []
@@ -296,6 +298,9 @@ def main():
                     mem, s_off, obj, a_ = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng, rec=rec)
                     ia = [x.astype(np.int64) for x in a_]
                     pa = (p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'])
+                    if unity:
+                        mem = bytearray(mem); struct.pack_into('<H', mem, s_off + 0x68, 0x2000)
+                        struct.pack_into('<H', mem, s_off + 0x6E, 0x2000); mem = bytes(mem)
                     sm = s68_6e(mem, s_off)
                     lv_ev = ref.lv_exposure(struct.unpack_from('<I', mem, s_off)[0], lambda a: struct.unpack_from('<I', mem, a)[0], HOST_LO, HOST_HI)
                     stats.setdefault('lv record usable', [0, 0])
@@ -306,11 +311,11 @@ def main():
                     if still:       # (a) a still equals the single-call reference on its own stats, whatever came before
                         assert want == (None if fail else ref.awbml_ref(tab_x, *ia, *pa, still_s=sm))
                     else:           # (b) live view is unaffected by the stills
-                        wsh = shadow.call(*ia, *pa, alloc_ok=not fail, lv_ev=lv_ev)
+                        wsh = shadow.call(*ia, *pa, alloc_ok=not fail, lv_ev=lv_ev, still_s=sm)
                         assert fail or wsh == want, (sq, step, wsh, want)
                     steps.append((mem, s_off, obj, fail, still, want, step))
                     for name, r in runners_x.items():
-                        got, na = r.run(mem, s_off, obj, int(fail), period=period, reset=int(step == 0), still=still, af89=af89, lv_exp=lv_exp)
+                        got, na = r.run(mem, s_off, obj, int(fail), period=period, reset=int(step == 0), still=still, af89=af89, lv_exp=lv_exp, lv_scale=lv_scale)
                         if got != want:
                             print(f'SEQ MISMATCH seq {sq} step {step} still {still} lib={name} C={got} ref={want} {p}')
                             stats['bad'] = stats.get('bad', 0) + 1
@@ -327,7 +332,7 @@ def main():
                     live_steps = [x for x in steps if not x[4]]
                     for name, r in runners_x.items():
                         for k, (mem, s_off, obj, fail, still, want, step) in enumerate(live_steps):
-                            got, na = r.run(mem, s_off, obj, 0, period=period, reset=int(k == 0), still=0, af89=af89, lv_exp=lv_exp)
+                            got, na = r.run(mem, s_off, obj, 0, period=period, reset=int(k == 0), still=0, af89=af89, lv_exp=lv_exp, lv_scale=lv_scale)
                             if got != want:
                                 print(f'LIVE-ONLY MISMATCH seq {sq} live step {k} lib={name} C={got} with stills={want}')
                                 stats['bad'] = stats.get('bad', 0) + 1

@@ -52,7 +52,7 @@ def main():
                 still = int(rng.random() < 0.3)
                 out_ = ctypes.create_string_buffer(T.OBJ_SIZE)
                 args = (mem, len(mem), s_off, obj, out_, blob, len(blob), r.offs, 0, int(first), int(rng.choice([1, 4])))
-                lib.host_run(*args) if legacy else lib.host_run(*args, int(rng.random() < 0.5), still, int(rng.choice([0, 1, 2, 2])))
+                lib.host_run(*args) if legacy else lib.host_run(*args, int(rng.random() < 0.5), still, int(rng.choice([0, 1, 2, 2])), int(rng.random() < 0.7))
                 first = False
                 ncalls += 1
         print(f'fuzz: {ncalls} calls with random scratch corruption: no out-of-bounds access (ASan / bounds / UBSan clean)')

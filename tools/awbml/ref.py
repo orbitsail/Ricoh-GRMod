@@ -536,8 +536,8 @@ class AwbmlSeq:
 
     counts = dict.fromkeys(['observations', 'first', 'scene resets', 'candidate frames held', 'R_post clamped at R_max (either axis)', 'confident (both axes R_eff below R_conf)'], 0)
 
-    def __init__(self, T, period=PERIOD, lv_exp=2):
-        self.T, self.period, self.lv_exp = T, period, lv_exp
+    def __init__(self, T, period=PERIOD, lv_exp=2, lv_scale=1):
+        self.T, self.period, self.lv_exp, self.lv_scale = T, period, lv_exp, lv_scale
         self.buf = False
         self.valid = False
         self.left = 0
@@ -545,6 +545,10 @@ class AwbmlSeq:
         self.g = None
         self.allocs = 0
         self.state = None
+
+    def out(self, s):
+        """The cached model-unit gains as a live view call outputs them: scaled by the call's S words when lv_scale is on."""
+        return (scale_gain(self.g[0], s[0]), scale_gain(self.g[1], s[1])) if self.lv_scale and s is not None else self.g
 
     def call(self, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, alloc_ok=True, still=False, still_s=None, lv_ev=None):
         """still: the estimate's third argument is non-zero: a fresh single-frame estimate that touches no live view state
@@ -565,7 +569,7 @@ class AwbmlSeq:
             return awbml_ref(self.T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, still_s=still_s)
         if self.valid and self.left:
             self.left -= 1
-            return None if self.fb else self.g
+            return None if self.fb else self.out(still_s)
         self.valid, self.fb, self.left = True, True, self.period - 1 if self.period > 1 else 0
         if self.lv_exp == 2 and lv_ev is not None:
             v24, e30 = lv_ev                          # live view: the exposure from the record (lv_exposure())
@@ -584,4 +588,4 @@ class AwbmlSeq:
         AwbmlSeq.counts['R_post clamped at R_max (either axis)'] += max(o[2:]) >= int(self.T['KF'][1])
         AwbmlSeq.counts['confident (both axes R_eff below R_conf)'] += max(rr) < int(self.T['KF'][3])
         self.fb, self.g = False, (exp_gain(self.T, 0, self.state['mu'][0]), exp_gain(self.T, 1, self.state['mu'][1]))
-        return self.g
+        return self.out(still_s)

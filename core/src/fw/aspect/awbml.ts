@@ -77,7 +77,14 @@ export const AWBML_AF89 = 1;
  */
 export const AWBML_LV_EXP = 2;
 
-/** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot; the period, the AF89 flag, and the live view exposure mode follow them. */
+/**
+ * ctx word, live view only: 1 = the live view's output gains are scaled by that call's own S+0x68 / S+0x6E (the LV manager's words), exactly as a still's are.
+ * Stock's final stage output is proportional to those words on both paths, so this is a no-op when they are 0x2000 and the stock-consistent correction when
+ * they are not. The cached gains and the filter state stay in model units (scaled at output only; a zero word leaves the gain alone). 0 = unscaled.
+ */
+export const AWBML_LV_SCALE = 1;
+
+/** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot; the period, the AF89 flag, the live view exposure mode and the live view scaling flag follow them. */
 const TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL', 'KF', 'LN'] as const;
 
 function fail(code: string, message: string): never {
@@ -124,7 +131,7 @@ export function installAwbLearn(p: Patch): AwbLearnLayout {
   }
   const module = awbmlModule();
   const data = awbmlData();
-  const ctx = p.append(u32le([AWBML_MAGIC, AWBML_ALLOC, AWBML_SLOT, ...TABLE_ORDER.map(() => 0), AWBML_PERIOD, AWBML_AF89, AWBML_LV_EXP]), 16);
+  const ctx = p.append(u32le([AWBML_MAGIC, AWBML_ALLOC, AWBML_SLOT, ...TABLE_ORDER.map(() => 0), AWBML_PERIOD, AWBML_AF89, AWBML_LV_EXP, AWBML_LV_SCALE]), 16);
   const code = p.append(module, 16);
   const stub = p.append((at) => assembleWords(
     `push {r4-r6,lr}

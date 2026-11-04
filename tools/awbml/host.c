@@ -26,7 +26,7 @@ static void *host_alloc(u32 bytes) {
 
 /* mem: stats arrays and S (pointers inside S are offsets into mem); returns the number of times alloc was called. */
 int host_run(const unsigned char *mem, unsigned memlen, unsigned s_off, const unsigned char *objin, unsigned char *objout,
-             const unsigned char *blob, unsigned bloblen, const unsigned *offs, int fail_alloc, int reset_slot, unsigned period, unsigned af89, unsigned is_still, unsigned lv_exp) {
+             const unsigned char *blob, unsigned bloblen, const unsigned *offs, int fail_alloc, int reset_slot, unsigned period, unsigned af89, unsigned is_still, unsigned lv_exp, unsigned lv_scale) {
   unsigned char *m = malloc(memlen), *obj = malloc(OBJ_SIZE), *bl = malloc(bloblen);
   struct awbml_ctx c;
   memcpy(m, mem, memlen); memcpy(obj, objin, OBJ_SIZE); memcpy(bl, blob, bloblen);
@@ -38,7 +38,7 @@ int host_run(const unsigned char *mem, unsigned memlen, unsigned s_off, const un
   c.expb = (const u32 *)(bl + offs[6]); c.tanh = (const i16 *)(bl + offs[7]); c.gexp = (const u32 *)(bl + offs[8]);
   c.recip = (const u32 *)(bl + offs[9]); c.cal = (const i32 *)(bl + offs[10]);
   c.kf = (const u32 *)(bl + offs[11]); c.ln = (const u32 *)(bl + offs[12]);
-  c.period = period; c.af89 = af89; c.lv_exp = lv_exp;
+  c.period = period; c.af89 = af89; c.lv_exp = lv_exp; c.lv_scale = lv_scale;
   awbml_host_base = m;
   awbml(&c, obj, m + s_off, is_still);
   memcpy(objout, obj, OBJ_SIZE);

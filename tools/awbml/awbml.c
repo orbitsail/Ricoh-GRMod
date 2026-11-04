@@ -64,6 +64,8 @@ struct awbml_ctx {
   u32 af89;                     /* nonzero: a gain override also clears Auto+0xAF89 (the camera's all-zero-sums hold flag) */
   u32 lv_exp;                   /* live view only: 0 = use S+0x24 / S+0x30; 1 = treat the exposure data as missing; 2 = read the exposure from the live view record
                                    (floats at S[0] - 0x4D2C0 + 0x38D20), else as 1 */
+  u32 lv_scale;                 /* live view: nonzero = the output gains are scaled by this call's S+0x68 / S+0x6E like a still's (the cached model-unit
+                                   result and the filter state stay unscaled); 0 = unscaled. Stills are always scaled. */
 };
 
 struct scratch {
@@ -591,8 +593,8 @@ static int lv_exposure(const unsigned char *S, i32 *v24, i32 *e30) {
   return 0;
 }
 
-static void put_gains(const struct awbml_ctx *ctx, unsigned char *obj, u32 g0, u32 g3, const unsigned char *S) {
-  if (S) {                                        /* a still; live view is left as it is */
+static void put_gains(const struct awbml_ctx *ctx, unsigned char *obj, u32 g0, u32 g3, const unsigned char *S, u32 scaled) {
+  if (scaled) {                                   /* a still, or a live view with ctx->lv_scale: scaled by this call's S words */
     g0 = scale_gain(g0, rd16(S + 0x68));
     g3 = scale_gain(g3, rd16(S + 0x6E));
   }
@@ -631,7 +633,7 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
     sc = live;
     if (sc->valid && sc->left) {                  /* between two computations: repeat the last result */
       sc->left--;
-      if (!sc->fb) put_gains(ctx, obj, sc->g0, sc->g3, 0);
+      if (!sc->fb) put_gains(ctx, obj, sc->g0, sc->g3, S, ctx->lv_scale);
       return;
     }
   }
@@ -651,7 +653,7 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   FUZZ(sc, 4);
   calibrate(ctx->cal, &pu, &pv);
   if (is_still) {                                 /* no filter: the single-frame estimate */
-    put_gains(ctx, obj, exp_gain(ctx, 0, pu), exp_gain(ctx, 1, pv), S);
+    put_gains(ctx, obj, exp_gain(ctx, 0, pu), exp_gain(ctx, 1, pv), S, 1);
     return;
   }
   z[0] = pu; z[1] = pv;
@@ -660,5 +662,5 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   kalman(sc, ctx->kf, z, rr);
   FUZZ(sc, 6);
   sc->g0 = exp_gain(ctx, 0, sc->mu[0]); sc->g3 = exp_gain(ctx, 1, sc->mu[1]); sc->fb = 0;
-  put_gains(ctx, obj, sc->g0, sc->g3, 0);
+  put_gains(ctx, obj, sc->g0, sc->g3, S, ctx->lv_scale);
 }

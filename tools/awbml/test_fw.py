@@ -112,6 +112,10 @@ class Fw:
         return [e.r16(A_OBJ + 4 + 2 * i) for i in range(4)], e.r16(A_OBJ + 0x20)
 
 
+def sw(S):
+    return (S['g68'], S['g6e'])
+
+
 def ref_args(S, live=False):
     P = [np.array(S['P'][k], dtype=np.int64) for k in range(5)]
     return (P[0], P[1], P[2], P[3], P[4], S['x0'], S['y0'], S['w'], S['h'], S['stride'], -0x880 if live else S['v24'], S['e30'])
@@ -170,7 +174,7 @@ def main():
             fresh = True
             if mode == 0:
                 cnt['mode0'] += 1
-                want = ref.awbml_ref(TAB, *ref_args(S, r2 == 0), 0)     # live view: the exposure data is treated as missing
+                want = ref.awbml_ref(TAB, *ref_args(S, r2 == 0), 0, still_s=sw(S))     # live view: the exposure data is treated as missing; both paths scaled by S+0x68/6E
                 if want is None:
                     cnt['mode0_fallback'] += 1
                     same = g7 == g6
@@ -203,8 +207,9 @@ def main():
         a, b, c = Fw(V6), Fw(V7), Fw(V7)       # camera alone; interleaved lives and stills; the lives alone
         af = q % 4 != 1                      # the build has it on; every fourth sequence switches it off
         lvx = (1, 0, 2)[q % 3]               # live-view exposure mode: 1, 0 (use S) or 2 (the build; no record here, so the same as 1)
-        for fw_ in (b, c): fw_.e.w32(CTX7 + 68, int(af)); fw_.e.w32(CTX7 + 72, lvx)
-        seq = ref.AwbmlSeq(TAB, ref.PERIOD, lvx)
+        lvs = (1, 1, 0, 1)[q % 4]            # live view scaling by S+0x68/6E (the build: on)
+        for fw_ in (b, c): fw_.e.w32(CTX7 + 68, int(af)); fw_.e.w32(CTX7 + 72, lvx); fw_.e.w32(CTX7 + 76, lvs)
+        seq = ref.AwbmlSeq(TAB, ref.PERIOD, lvx, lvs)
         ptr = None
         still_p = rng.choice([0.0, 0.3, 0.5])
         for step in range(rng.randrange(10, 36)):
@@ -214,10 +219,10 @@ def main():
             r2 = STILL if still else 0
             g6, n6 = a.run(S, mode, r2=r2)
             g7, n7 = b.run(S, mode, r2=r2)
-            want = seq.call(*ref_args(S), mode, still=still)
+            want = seq.call(*ref_args(S), mode, still=still, still_s=sw(S))
             if still:                          # (a) a still equals the single-call reference on its own stats
                 nstill += 1
-                if want != ref.awbml_ref(TAB, *ref_args(S), mode): seqbad += 1; bad.append(('still != single-call ref', q, step, n))
+                if want != ref.awbml_ref(TAB, *ref_args(S), mode, still_s=sw(S)): seqbad += 1; bad.append(('still != single-call ref', q, step, n))
             else:                              # (b) the live output sequence is the same without the stills
                 g8, n8 = c.run(S, mode, r2=0)
                 nlive_same += 1
@@ -253,7 +258,7 @@ def main():
             S = dict(S0); S['g68'], S['g6e'] = s68, s6e
             for lab, r2 in (('live', 0), ('still', STILL)):
                 ours = Fw(V7); go, _ = ours.run(S, 0, r2=r2)
-                want = ref.awbml_ref(TAB, *ref_args(S, lab == 'live'), 0, still_s=None if lab == 'live' else (s68, s6e))
+                want = ref.awbml_ref(TAB, *ref_args(S, lab == 'live'), 0, still_s=(s68, s6e))     # live view scaled too
                 nsc += 1
                 if want is None: continue
                 if (go[0], go[3]) != want: sbad2 += 1; bad.append(('scaling != ref', n, cond, lab, go, want))
@@ -287,6 +292,7 @@ def main():
     for si in list(range(3, len(SS), 23 if quick else 11))[:12 if quick else 30]:
         n, S0 = SS[si]
         if n.startswith('sparse'): continue
+        S0 = dict(S0, g68=0x2000, g6e=0x2000)       # unity words: live equals 8.1's unscaled live
         for av, tv, sv in valid:
             na, nt, ns = f8(av), f8(tv), f8(sv)
             e = 32 * (na + nt - ns)
@@ -322,6 +328,22 @@ def main():
         gc.collect()
     print(f'5. live view exposure from the record: {n5} live calls ({nfb} valid ones with a fallback result), {nst5} stills; mismatches {bad5} '
           f'(valid triple == still with the equivalent e30 == ref; rejected / out of RAM == 8.1 live; stills and modes 1, 2 == 8.1)')
+    # ---- 6. live view scaling by S+0x68/6E (ctx lv_scale): with the words at 0x2000 this firmware equals the previous one (final3) on every live and still call
+    #  (computing and cached, with and without a record, stills interleaved); with other words live equals the scaled reference (2b above, and the sequences of 2).
+    V3 = _os.environ.get('FINAL3_RTOS', f'{SPD}/cpulut/final3/RTOS.bin')
+    n6 = bad6 = 0
+    for si in list(range(1, len(SS), 17 if quick else 7))[:8 if quick else 30]:
+        n, S0 = SS[si]
+        if n.startswith('sparse'): continue
+        S = dict(S0, g68=0x2000, g6e=0x2000)
+        old, new = Fw(V3), Fw(V7)
+        for step, (r2, rc, mode) in enumerate([(0, None, 0), (0, None, 0), (STILL, None, 0), (0, None, 0), (0, None, 0), (0, (fb(4.0), fb(7.0), fb(7.5)), 0), (0, None, 0), (STILL, (fb(4.0), fb(7.0), fb(7.5)), 0), (0, None, 1), (0, None, 0)]):
+            go, no = old.run(S, mode, r2=r2, rec=rc); gn, nn = new.run(S, mode, r2=r2, rec=rc)
+            n6 += 1
+            if (go, no) != (gn, nn): bad6 += 1; bad.append(('final4 != final3 at unity words', n, step, go, gn))
+        del old, new
+        gc.collect()
+    print(f'6. live view scaling (final4 vs final3 with S+0x68/6E = 0x2000, live computing / cached / record / interleaved stills / mode 1): {n6} calls, mismatches {bad6}')
     # ---- 3. instruction counts (unicorn) on a few scenes: the camera's own Auto estimate, ours computing / cached / leaving
     pick = [SS[i % len(SS)] for i in (0, 10, 36, 80, 140, 200, len(SS) - 30, len(SS) - 5)]
     for n, S in pick:
@@ -359,7 +381,7 @@ def main():
         ctx = ctx_of(b)
         diff = [i for i in range(min(len(a), len(b))) if a[i] != b[i]]
         outside = [hex(base + i) for i in diff if base + i < ctx and not 0x53938E2C <= base + i < 0x53938E30]
-        if os.environ.get('EXPECT_SHADOW'): outside = [h for h in outside if not (0x5391F3A4 <= int(h, 16) < 0x5391F3A8 or 0x5404938C <= int(h, 16) < 0x54049390)]   # (checked strictly below)
+        if os.environ.get('EXPECT_SHADOW') or os.environ.get('ALLOW_SHADOW_HOOKS'): outside = [h for h in outside if not (0x5391F3A4 <= int(h, 16) < 0x5391F3A8 or 0x5404938C <= int(h, 16) < 0x54049390)]   # (checked strictly below)
         tail = hex(base + diff[-1]) if diff else None
         print(f'4. image vs {prev.split("/")[-2]}: lengths {len(a)} / {len(b)}; {len(diff)} bytes differ; outside the call word and the appended module area: {len(outside)}; '
               f'ctx {ctx_of(a):#x} -> {ctx:#x}, stub {stub_of(a):#x} -> {stub_of(b):#x}, last differing byte {tail}')

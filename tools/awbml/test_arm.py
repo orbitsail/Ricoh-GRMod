@@ -36,7 +36,7 @@ def main(n_scenes=40, n_random=80):
     uc.mem_write(BLOB, blob)
     uc.mem_write(STUB, struct.pack('<II', 0xE3A00207, 0xE12FFF1E))     # alloc: mov r0, #0x70000000; bx lr
     uc.mem_write(STUB + 8, struct.pack('<I', 0xE320F000) * 2)           # return address: nop
-    ctx = [ref.MAGIC, STUB, CTX + 0x100] + [BLOB + offs[n] for n in ref.TABLE_ORDER] + [1, 0, 0]   # period 1: every call computes; AF89 clearing off; live-view exposure mode 0
+    ctx = [ref.MAGIC, STUB, CTX + 0x100] + [BLOB + offs[n] for n in ref.TABLE_ORDER] + [1, 0, 0, 0]   # lv_scale off here; period 1: every call computes; AF89 clearing off; live-view exposure mode 0
     uc.mem_write(CTX, struct.pack('<%dI' % len(ctx), *ctx))
     cases = []
     cube, _ = scenes.load_cube()
@@ -81,16 +81,19 @@ def main(n_scenes=40, n_random=80):
             ok += 1; fb += want is None
     print(f'ARM (unicorn) vs ref: {ok + bad} cases, {bad} mismatches, {fb} fallbacks')
     # sequences with the build's period and the temporal filter: the scratch buffer stays, ref.AwbmlSeq is the model
-    uc.mem_write(CTX + 4 * (len(ctx) - 3), struct.pack('<I', ref.PERIOD))
+    uc.mem_write(CTX + 4 * (len(ctx) - 4), struct.pack('<I', ref.PERIOD))
     sbad = scalls = 0
     nrec = [0]
     pool = [c for c in cases[:n_scenes + 6]]
     for q in range(12):
         af89 = q % 2
         lv = int(rng.choice([0, 1, 2, 2, 2]))
-        uc.mem_write(CTX + 4 * (len(ctx) - 2), struct.pack('<I', af89))
-        uc.mem_write(CTX + 4 * (len(ctx) - 1), struct.pack('<I', lv))
-        seq = ref.AwbmlSeq(tab, ref.PERIOD, lv)
+        uc.mem_write(CTX + 4 * (len(ctx) - 3), struct.pack('<I', af89))
+        uc.mem_write(CTX + 4 * (len(ctx) - 2), struct.pack('<I', lv))
+        lvs = int(rng.random() < 0.75)
+        unity = lvs and q % 4 == 3                       # S words all 0x2000: lv_scale on must equal the unscaled model (final3)
+        uc.mem_write(CTX + 4 * (len(ctx) - 1), struct.pack('<I', lvs))
+        seq = ref.AwbmlSeq(tab, ref.PERIOD, lv, 0 if unity else lvs)
         uc.mem_write(CTX + 0x100, b'\0\0\0\0')
         last = None
         for step in range(40):
@@ -108,6 +111,8 @@ def main(n_scenes=40, n_random=80):
                 rec = (P, rec_words(rng)[1])
             mem, s_off, obj, a = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng, rec=rec)
             mem = bytearray(mem)
+            if unity:
+                struct.pack_into('<H', mem, s_off + 0x68, 0x2000); struct.pack_into('<H', mem, s_off + 0x6E, 0x2000)
             for k in range(5):
                 struct.pack_into('<I', mem, s_off + 4 * k, MEM + struct.unpack_from('<I', mem, s_off + 4 * k)[0])
             lv_ev = ref.lv_exposure(struct.unpack_from('<I', mem, s_off)[0], lambda ad: struct.unpack_from('<I', mem, ad - MEM)[0], MEM + HOST_LO, MEM + HOST_HI)
