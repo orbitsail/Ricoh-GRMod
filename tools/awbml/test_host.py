@@ -55,10 +55,17 @@ def pack_case(R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, rng):
     struct.pack_into('<HHHH', sb, 0x1c, x0, y0, w, h)
     struct.pack_into('<i', sb, 0x24, v24)
     struct.pack_into('<i', sb, 0x30, e30)
+    for off in (0x68, 0x6E):                                      # the R and B gain words: unity, the capture factors, extreme or zero
+        v = int(rng.choice([0x2000, 0x2000, round(0x2000 * 1.563), round(0x2000 * 3.019), int(rng.integers(0, 65536)), 0, 1, 65535]))
+        struct.pack_into('<H', sb, off, v)
     mem += sb
     obj = bytearray(rng.integers(0, 256, OBJ_SIZE, dtype=np.uint8).tobytes())
     obj[4:6] = b'\0\0'; obj[0xA:0xC] = b'\0\0'; obj[0xAF88] = mode
     return bytes(mem), s_off, bytes(obj), arrs
+
+
+def s68_6e(mem, s_off):
+    return struct.unpack_from('<H', mem, s_off + 0x68)[0], struct.unpack_from('<H', mem, s_off + 0x6E)[0]
 
 
 class Runner:
@@ -165,8 +172,10 @@ def main():
             for name, r in runners.items():
                 got, na = r.run(mem, s_off, obj, int(fail_alloc), reset=1)   # a fresh scratch: the filter starts from this observation
                 gs, _ = r.run(mem, s_off, obj, int(fail_alloc), reset=1, still=1)   # a still gives the same single-frame result
-                if gs != got:
-                    print(f'STILL MISMATCH {tag} lib={name} still={gs} live={got} params={p}')
+                wst = None if want is None else ref.awbml_ref(tab, *[x.astype(np.int64) for x in a], p['x0'], p['y0'], p['w'], p['h'], p['stride'],
+                                                              p['v24'], p['e30'], p['mode'], still_s=s68_6e(mem, s_off))
+                if gs != wst:
+                    print(f'STILL MISMATCH {tag} lib={name} C={gs} ref={wst} live={got} params={p}')
                     stats['bad'] = stats.get('bad', 0) + 1
                     return
                 if fail_alloc:
@@ -232,9 +241,10 @@ def main():
                     mem, s_off, obj, a_ = pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng)
                     ia = [x.astype(np.int64) for x in a_]
                     pa = (p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'])
-                    want = seq.call(*ia, *pa, alloc_ok=not fail, still=bool(still))
+                    sm = s68_6e(mem, s_off)
+                    want = seq.call(*ia, *pa, alloc_ok=not fail, still=bool(still), still_s=sm)
                     if still:       # (a) a still equals the single-call reference on its own stats, whatever came before
-                        assert want == (None if fail else ref.awbml_ref(tab_x, *ia, *pa))
+                        assert want == (None if fail else ref.awbml_ref(tab_x, *ia, *pa, still_s=sm))
                     else:           # (b) live view is unaffected by the stills
                         wsh = shadow.call(*ia, *pa, alloc_ok=not fail)
                         assert fail or wsh == want, (sq, step, wsh, want)

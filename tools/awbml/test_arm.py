@@ -115,7 +115,7 @@ def main(n_scenes=40, n_random=80):
             if region_a is not None and bytes(uc.mem_read(HEAP, 35468)) != region_a :
                 sbad += 1; print('STILL WROTE THE LIVE VIEW REGION')
             got = None if o == obj else (struct.unpack_from('<H', o, 4)[0], struct.unpack_from('<H', o, 0xA)[0])
-            want = seq.call(*[x.astype(np.int64) for x in a], p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], still=bool(still))
+            want = seq.call(*[x.astype(np.int64) for x in a], p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], still=bool(still), still_s=(struct.unpack_from('<H', mem, s_off + 0x68)[0], struct.unpack_from('<H', mem, s_off + 0x6E)[0]))
             scalls += 1
             if want is None:
                 if o[0xAF89] != obj[0xAF89]: sbad += 1; print('AF89 touched without a result')

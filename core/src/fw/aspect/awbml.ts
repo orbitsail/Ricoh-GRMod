@@ -32,6 +32,10 @@
  * Live view's S has v24/v28/v2c never written (0) and e30 from a record word nothing writes (so probably 0, which would read as a
  * very dark scene), so live view treats the exposure data as missing (the context's live view exposure mode, 1); stills keep using S.
  *
+ * Stills only: the model's gains are in the units of the settings it was calibrated with (the R and B gain words S+0x68 and
+ * S+0x6E = 0x2000); at capture those words carry the camera's per-unit factor (about 1.56 and 3.02), so a still's gains are
+ * scaled by them: (gain * S[0x68] + 0x1000) >> 13, likewise B with S[0x6E]. Live view is left as it is.
+ *
  * The context's AF89 flag (on in this build) makes the module also write 0 to this+0xAF89 whenever it overrides the gains with a valid estimate (a repeated live view result too; never on a fallback or in another mode):
  * the final stage sets that byte when the camera's own sums are all zero, and the live view smoother then holds the previous
  * value; a learned estimate does not depend on those sums.
@@ -68,7 +72,7 @@ export const AWBML_AF89 = 1;
 /** ctx word, live view only: 1 = the exposure data in S (v24 = 0, e30 from a record word nothing writes) is treated as missing, the same as the camera's no-exposure marker; 0 = use S+0x30 as it is. Stills always use S. */
 export const AWBML_LV_EXP = 1;
 
-/** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot; the period, the AF89 flag and the live view exposure mode follow them. */
+/** Order of the tables in the context (struct awbml_ctx in awbml.c) after magic, alloc and slot; the period, the AF89 flag, and the live view exposure mode follow them. */
 const TABLE_ORDER = ['LOG', 'BIAS', 'FSPEC', 'TW', 'ATAN', 'EXPA', 'EXPB', 'TANH', 'GEXP', 'RECIP', 'CAL', 'KF', 'LN'] as const;
 
 function fail(code: string, message: string): never {

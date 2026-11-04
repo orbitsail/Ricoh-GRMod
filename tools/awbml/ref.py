@@ -453,7 +453,14 @@ def observe(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode):
     return u, v, o[2], o[3]
 
 
-def awbml_ref(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, calibrated=True):
+def scale_gain(g, s):
+    """At capture the R and B gain words S+0x68 / S+0x6E carry the camera's per-unit factor: (g * s + 0x1000) >> 13, at most 0xFFFF
+    (a zero word is left alone), as the C code."""
+    return g if not s else min((g * s + 0x1000) >> 13, 0xFFFF)
+
+
+def awbml_ref(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, calibrated=True, still_s=None):
+    """still_s: (u16 S+0x68, u16 S+0x6E) of a still call (the gains are scaled by them), None for live view and single frames."""
     """-> (g0, g3) or None (the camera's own result stays). Arrays: flat, indexable at (y0+y)*stride+x0+x."""
     if mode != 0 or not (1 <= w <= 64 and 1 <= h <= 64):
         return None
@@ -463,7 +470,10 @@ def awbml_ref(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, calibr
     if uv is None:
         return None
     u, v = calibrate(T, *uv) if calibrated else uv
-    return exp_gain(T, 0, u), exp_gain(T, 1, v)
+    g = exp_gain(T, 0, u), exp_gain(T, 1, v)
+    if still_s is not None:
+        g = scale_gain(g[0], still_s[0]), scale_gain(g[1], still_s[1])
+    return g
 
 
 def file_sha256(b):
@@ -508,7 +518,7 @@ class AwbmlSeq:
         self.allocs = 0
         self.state = None
 
-    def call(self, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, alloc_ok=True, still=False):
+    def call(self, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, alloc_ok=True, still=False, still_s=None):
         """still: the estimate's third argument is non-zero: a fresh single-frame estimate that touches no live view state
         (it may create the buffer, as the C code does)."""
         if mode != 0:
@@ -524,7 +534,7 @@ class AwbmlSeq:
                 return None
             self.buf, self.valid, self.state = True, False, None
         if still:
-            return awbml_ref(self.T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode)
+            return awbml_ref(self.T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode, still_s=still_s)
         if self.valid and self.left:
             self.left -= 1
             return None if self.fb else self.g

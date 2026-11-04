@@ -102,6 +102,7 @@ class Fw:
         if hs is not None: e.mu.hook_del(hs)
         for i, v in enumerate(regs):
             if e.mu.reg_read(UC_ARM_REG_R4 + i) != v: self.callee_ok = False
+        self.m = (e.r16(A_OBJ + 0xC), e.r16(A_OBJ + 0x12))
         return [e.r16(A_OBJ + 4 + 2 * i) for i in range(4)], e.r16(A_OBJ + 0x20)
 
 
@@ -142,6 +143,9 @@ def build_scenes():
 
 def main():
     scs = build_scenes()
+    import os as _os
+    quick = bool(_os.environ.get('AWBML_QUICK'))
+    if quick: scs = scs[::4]
     SS = [(n, SC.settings(sc, R)) for n, sc in scs]
     kinds = {}
     for n, _ in scs: kinds[n.split()[0]] = kinds.get(n.split()[0], 0) + 1
@@ -186,7 +190,7 @@ def main():
     print(f'   operator new / slot as expected {all_ok["alloc"]}/{nrun}; canary check passed {all_ok["canary"]}/{nrun}; r4-r11 preserved {all_ok["regs"]}/{nrun}')
     # ---- 2. sequences with the build's period, one emulator pair per sequence, against ref.AwbmlSeq
     rng = random.Random(9)
-    nseq, ncalls, seqbad = 60, 0, 0
+    nseq, ncalls, seqbad = (12 if quick else 60), 0, 0
     allocs_ok = 0
     nstill = nlive_same = naf = 0
     for q in range(nseq):
@@ -229,8 +233,40 @@ def main():
         del a, b, c
         gc.collect()
     print(f'2. interleaved sequences (live r2=0 and stills r2=record, period {ref.PERIOD}): {nseq} sequences, {ncalls} calls ({nstill} stills; {nlive_same} live outputs compared with a run without stills; {naf} AF89-cleared checks), mismatches {seqbad}; allocation once and pointer stable, no canary failure, registers kept: {allocs_ok}/{nseq}')
+    # ---- 2b. the capture gain words S+0x68 / S+0x6E: a still equals ref.awbml_ref(still_s = those words), so it scales exactly with
+    # them; at 0x2000 / 0x2000 it is bit-for-bit the previous build's (v8c); a live view call ignores them (byte-identical to v8c).
+    import os
+    V8C = os.environ.get('V8C_RTOS', f'{SPD}/cpulut/fw8/v8c/RTOS.bin')
+    sbad2 = nsc = nunity = nlive_same = 0
+    ratios = []
+    for si in list(range(0, len(SS), 11))[:30]:
+        n, S0 = SS[si]
+        if n.startswith('sparse'): continue
+        pv_s = Fw(V8C); gp_s, _ = pv_s.run(S0, 0, r2=STILL); pv_l = Fw(V8C); gp_l, _ = pv_l.run(S0, 0, r2=0)
+        for cond, (s68, s6e) in (('unity', (0x2000, 0x2000)), ('capture', (round(0x2000 * 1.563), round(0x2000 * 3.019))), ('other', (0x1800 + 37 * si, 0x3000 + 91 * si))):
+            S = dict(S0); S['g68'], S['g6e'] = s68, s6e
+            for lab, r2 in (('live', 0), ('still', STILL)):
+                ours = Fw(V7); go, _ = ours.run(S, 0, r2=r2)
+                want = ref.awbml_ref(TAB, *ref_args(S, lab == 'live'), 0, still_s=None if lab == 'live' else (s68, s6e))
+                nsc += 1
+                if want is None: continue
+                if (go[0], go[3]) != want: sbad2 += 1; bad.append(('scaling != ref', n, cond, lab, go, want))
+                if lab == 'still':
+                    if cond == 'unity':
+                        nunity += 1
+                        if go != gp_s: sbad2 += 1; bad.append(('still at unity differs from v8c', n, go, gp_s))
+                    base_g = gp_s
+                    ratios.append(((go[0] / base_g[0]) / (s68 / 0x2000), (go[3] / base_g[3]) / (s6e / 0x2000)))
+                else:
+                    nlive_same += 1
+                    if go[:] != gp_l and cond == 'unity' and go != gp_l: sbad2 += 1; bad.append(('live differs from v8c', n, go, gp_l))
+                    if cond != 'unity' and (go[0], go[3]) != want: sbad2 += 1
+            gc.collect()
+    r = np.array(ratios)
+    print(f'2b. S+0x68/0x6E (unity / x1.563,x3.019 / other): {nsc} calls, mismatches vs ref {sbad2}; still at unity bit-identical to v8c {nunity}; live view checks {nlive_same}; '
+          f'still output divided by (unity output x word / 0x2000): R {r[:, 0].min():.4f}..{r[:, 0].max():.4f}, B {r[:, 1].min():.4f}..{r[:, 1].max():.4f}')
     # ---- 3. instruction counts (unicorn) on a few scenes: the camera's own Auto estimate, ours computing / cached / leaving
-    pick = [SS[i] for i in (0, 10, 36, 80, 140, 200, len(SS) - 30, len(SS) - 5)]
+    pick = [SS[i % len(SS)] for i in (0, 10, 36, 80, 140, 200, len(SS) - 30, len(SS) - 5)]
     for n, S in pick:
         a = Fw(V6); g, _ = a.run(S, 0, True); ins['v6'].append(a.insn)
         b = Fw(V7)

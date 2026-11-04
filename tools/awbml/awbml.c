@@ -536,7 +536,21 @@ static void kalman(struct scratch *sc, const u32 *kf, const i32 *z, const u32 *r
   }
 }
 
-static void put_gains(const struct awbml_ctx *ctx, unsigned char *obj, u32 g0, u32 g3) {
+/* The gains are in the units of the camera's final stage under the settings the model was calibrated with (S+0x68 and
+ * S+0x6E = 0x2000, the R and B gain words); at capture those words carry the camera's per-unit factor: out = (g * s + 0x1000)
+ * >> 13, at most 0xFFFF (a zero word is left alone). */
+static u32 scale_gain(u32 g, u32 s) {
+  u32 o;
+  if (!s) return g;
+  o = (u32)(((u64)g * s + 0x1000) >> 13);
+  return o > 0xFFFF ? 0xFFFF : o;
+}
+
+static void put_gains(const struct awbml_ctx *ctx, unsigned char *obj, u32 g0, u32 g3, const unsigned char *S) {
+  if (S) {                                        /* a still; live view is left as it is */
+    g0 = scale_gain(g0, rd16(S + 0x68));
+    g3 = scale_gain(g3, rd16(S + 0x6E));
+  }
   wr16(obj + 4, g0);
   wr16(obj + 0xA, g3);
   if (ctx->af89) obj[0xAF89] = 0;
@@ -572,7 +586,7 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
     sc = live;
     if (sc->valid && sc->left) {                  /* between two computations: repeat the last result */
       sc->left--;
-      if (!sc->fb) put_gains(ctx, obj, sc->g0, sc->g3);
+      if (!sc->fb) put_gains(ctx, obj, sc->g0, sc->g3, 0);
       return;
     }
   }
@@ -592,7 +606,7 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   FUZZ(sc, 4);
   calibrate(ctx->cal, &pu, &pv);
   if (is_still) {                                 /* no filter: the single-frame estimate */
-    put_gains(ctx, obj, exp_gain(ctx, 0, pu), exp_gain(ctx, 1, pv));
+    put_gains(ctx, obj, exp_gain(ctx, 0, pu), exp_gain(ctx, 1, pv), S);
     return;
   }
   z[0] = pu; z[1] = pv;
@@ -601,5 +615,5 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   kalman(sc, ctx->kf, z, rr);
   FUZZ(sc, 6);
   sc->g0 = exp_gain(ctx, 0, sc->mu[0]); sc->g3 = exp_gain(ctx, 1, sc->mu[1]); sc->fb = 0;
-  put_gains(ctx, obj, sc->g0, sc->g3);
+  put_gains(ctx, obj, sc->g0, sc->g3, 0);
 }
