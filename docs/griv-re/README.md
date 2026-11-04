@@ -5,6 +5,7 @@
 这个目录是 GR IV 固件 1.11 逆向工作的永久笔记，原来的发现只存在于会话的临时目录里，会话结束就没了。
 内容：自动白平衡（AWB）的原厂流程和我们的学习型挂钩、实时取景（LV）曝光的真实来源、阴影/高光校正的核心和我们的树模型挂钩、
 DNG 厂商注释里可用来做测试数据的标签、CPU 套 LUT 实验、模拟器测试怎么跑，以及 7.x 到 8.2 的版本史。
+另有一篇（ae-accuracy.md）是对原厂自动测光（AE）的实测：它把画面平均亮度稳在什么位置、和 5 位修图师的偏好差多少、高光余量、弱项在哪，以及为什么没有去替换它。
 每条结论都标了证据等级：[E] 在模拟器里逐位验证过，[C] 只读了代码，[I] 推断。
 最重要的教训：模拟器里被桩掉（stub）的东西都是盲区，8.0 的绿色照片就是这么来的（拍照时 S+0x68/0x6E 增益字不是 0x2000，
 而是每台机器自己的系数，约 1.56 / 3.02）；发布前一定要拿真实 DNG 对一遍。
@@ -19,6 +20,7 @@ DNG 厂商注释里可用来做测试数据的标签、CPU 套 LUT 实验、模�
 | [exposure.md](exposure.md) | where the live exposure really comes from (AE, ComPropIf, E/X/D buffers), property floats vs AE values, EXIF writers, still record fields, quantisation, open questions |
 | [shadow-highlight.md](shadow-highlight.md) | shadow/highlight correction core 0x5391F230, tables, gain table, ISO limiter, the 16-bit wrap, highlight gate, our hook and the tree model |
 | [dng-tags.md](dng-tags.md) | the DNG makernote tags used as test data and their layouts |
+| [ae-accuracy.md](ae-accuracy.md) | black-box measurement of the stock auto exposure from DNGs: the level it regulates, comparison with five professional retouchers, highlight margin, weak spots, limits of the method, why the AE was not replaced |
 | [cpu-lut.md](cpu-lut.md) | the CPU-applied LUT experiment |
 | [testing.md](testing.md) | the unicorn harness, what each suite checks, what is stubbed, how to run, expected output, external inputs |
 | [history.md](history.md) | versions v1 .. v7, 8.0 .. 8.2: what changed and why, build hashes |

@@ -88,6 +88,7 @@ Forced-zero cases kept by our hook: `sb[0x8A]` or `sb[0x8B]` set.
 - `A[0x9C]` from a `P[0x770]` switch (table `0x53681900`).
 
 **On and Auto use the same ISO gate** [I]: the settings fill copies `P[0x7E4]` unchanged into `A[0x3AA]` and the ISO window above does not branch on it. This was the session's conclusion; the notes do not contain a separate emulation of Auto vs On, so treat it as [I].
+**Corrected** (old -> new): the claim above is wrong for Auto. Off never applies HC; On is ISO-gated only (ISO 200 or more inside the ISO window); Auto needs the same ISO gate and a scene test (at least one block of the central 52 x 52 of the AE's x array with x of 2.5 or more, i.e. near white) and a headroom test, and it can hold its previous answer. The gate function was read again (`0x53669218`, spot-checked: the Off / On / Auto branches, the 2.5 test and the row 6..57 / column 2..53 scan) [C]. Source: exposure.md, "Stock AE: metering and target", A and 4.
 Effect on the pictures: the core's `hl` shift (raw 1 EV darker, every channel doubled) and the HLTAB multiplier in the gain table.
 
 ## 7. Our hook and the learned Auto (`core/src/fw/aspect/shadowml.ts`, `tools/shadowml/`)
