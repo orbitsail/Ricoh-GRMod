@@ -5,6 +5,8 @@ import importlib.util
 import math
 import pickle
 import sys
+import tempfile
+from pathlib import Path
 
 import numpy as np
 
@@ -12,9 +14,8 @@ import calib_r
 import ref
 import scenes
 
-SP = ref.SP
-CACHE = SP / 'awbml_work' / 'sim2_obs2.pkl'
-_spec = importlib.util.spec_from_file_location('grscenes', SP / 'grdng' / 'scenes.py')
+CACHE = Path(tempfile.gettempdir()) / 'awbml_sim2_obs2.pkl'
+_spec = importlib.util.spec_from_file_location('grscenes', ref.HERE / 'synth_scenes.py')
 g = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(g)
 Q16 = 65536.0
 NS = 32          # computing calls per static run

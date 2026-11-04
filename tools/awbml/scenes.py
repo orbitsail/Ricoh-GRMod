@@ -5,7 +5,11 @@ import math
 
 import numpy as np
 
-from ref import SP
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 're'))
+import griv_env
 
 STAT_F = np.array([0.920, 1.0, 0.974])
 STUDIO = {  # name: (raw R/G, raw B/G, N, t, ISO)
@@ -26,11 +30,11 @@ def scene_args(s, ev):
 
 
 def load_cube():
-    pr = np.load(SP / 'learnawb' / 'cube_eval_preds.npz', allow_pickle=True)
+    pr = np.load(griv_env.data('learnawb', 'cube_eval_preds.npz'), allow_pickle=True)
     names = [str(n) for n in pr['names']]
     out = []
     for nm in names:
-        z = np.load(SP / 'cubepp_gr' / f'{nm}.npz', allow_pickle=True)
+        z = np.load(griv_env.data('cubepp_gr', f'{nm}.npz'), allow_pickle=True)
         rn, bn = (float(x) for x in z['gt_gr'])
         ev = float(z['Av']) + float(z['Tv']) - float(z['Sv'])
         out.append(dict(name=nm, s=z['s'], gt=np.array([STAT_F[0] * rn, 1.0, STAT_F[2] * bn]), ev=ev, Av=float(z['Av']), Sv=float(z['Sv'])))
@@ -38,10 +42,10 @@ def load_cube():
 
 
 def load_gallery():
-    summ = json.load(open(SP / 'grdng' / 'ext' / 'summary.json'))
+    summ = json.load(open(griv_env.data('grdng', 'ext', 'summary.json')))
     out = []
     for r in summ:
-        z = np.load(SP / 'grdng' / 'ext' / f"{r['id']}.npz")
+        z = np.load(griv_env.data('grdng', 'ext', f"{r['id']}.npz"))
         out.append(dict(name=r['id'], s=z['s'], ev=ev_of(r['N'], r['t'], r['iso']), wp=r['wp'], Av=2 * math.log2(r['N']), Sv=math.log2(r['iso'] / 3.125)))
     return out
 
@@ -49,7 +53,7 @@ def load_gallery():
 def load_studio():
     out = []
     for nm, (rg, bg, N, t, iso) in STUDIO.items():
-        z = np.load(SP / 'studio' / f'{nm}.npz')
+        z = np.load(griv_env.data('studio', f'{nm}.npz'))
         out.append(dict(name=nm, s=z['s'], ev=ev_of(N, t, iso), Av=2 * math.log2(N), Sv=math.log2(iso / 3.125), raw=np.array([rg, 1.0, bg]),
                         gt=np.array([STAT_F[0] * rg, 1.0, STAT_F[2] * bg])))
     return out

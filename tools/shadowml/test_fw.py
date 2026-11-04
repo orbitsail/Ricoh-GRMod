@@ -15,8 +15,8 @@ camera does, against the same firmware without it (the base RTOS) and against re
   6. The image against the build without shadowLearn: only the hook word, TB[4], the appended area and the checksum
      compensation word differ.
 
-usage: test_fw.py [pre/RTOS.bin (with shadowLearn)] [base/RTOS.bin]   (SP paths below; needs unicorn and the scratchpad's awbsim /
-grdng modules)"""
+usage: test_fw.py [pre/RTOS.bin (with shadowLearn)] [base/RTOS.bin]   (default $GRIV_BASELINES/fw9_pre and fw9_base; needs unicorn, GRIV_BASELINES,
+GRIV_RTOS and the helpers in tools/re; docs/griv-re/testing.md section 4)"""
 import os
 import random
 import struct
@@ -25,11 +25,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-SPD = '/tmp/claude-0/-home-claude/4982966f-5cf0-5c25-b5a9-c2b6bab6cd69/scratchpad'
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [f'{SPD}/awbsim', f'{SPD}/grdng', f'{SPD}/drange', str(HERE)]
-PRE = sys.argv[1] if len(sys.argv) > 1 else f'{SPD}/cpulut/fw9/pre/RTOS.bin'
-BASE = sys.argv[2] if len(sys.argv) > 2 else f'{SPD}/cpulut/fw9/base/RTOS.bin'
+sys.path[:0] = [str(HERE.parent / 're'), str(HERE)]
+import griv_env
+PRE = sys.argv[1] if len(sys.argv) > 1 else griv_env.baseline('fw9_pre')
+BASE = sys.argv[2] if len(sys.argv) > 2 else griv_env.baseline('fw9_base')
 
 import numpy as np
 from unicorn import UC_HOOK_CODE

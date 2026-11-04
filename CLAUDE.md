@@ -14,15 +14,15 @@ Small analysis scripts are in `tools/re/` (set `GRIV_RTOS` to the stock RTOS sec
 
 ## Build
 
-- Install: `npm install`. Firmware needs the official file (`core/testdata/private/official.bin`, never committed).
+- Install: `npm install`. Firmware needs the official file (`core/testdata/private/official.bin`, never committed; also in the private pack as `official/official.bin`).
 - Test firmware: `npx vite-node tools/testfw/build.ts OFFICIAL.bin OUT.bin '{"brightAuto":"balanced","awbFit":true,"awbLearn":true,"shadowLearn":true}'`
 - Regenerate embedded modules after editing the C or the reference: `python3 tools/awbml/gen.py`, `python3 tools/shadowml/gen.py` (needs clang + ld.lld + llvm-objcopy, or `GRMOD_ZIG=1` with ziglang). Never edit `*-code.ts`, `*-data.ts`, `*_const.h` by hand.
 
 ## Tests
 
 - TypeScript: `npm test` and `npm -w core run typecheck`.
-- Module suites (Python, need numpy, unicorn, gcc; they read inputs that live outside the repo, see `docs/griv-re/testing.md` section 4):
-  `cd tools/awbml && python3 test_host.py && python3 test_arm.py && python3 test_fuzz.py`, then `python3 test_fw.py NEW_RTOS V6_RTOS` (ends with `RESULT all passed`).
+- Module suites (Python, need numpy, unicorn, gcc; they read inputs that live outside the repo: set `GRIV_DATA`, `GRIV_BASELINES` and `GRIV_RTOS` to the private pack, see `docs/griv-re/testing.md` section 4; a missing one stops with a message naming it):
+  `cd tools/awbml && python3 test_host.py && python3 test_arm.py && python3 test_fuzz.py`, then `python3 test_fw.py [NEW_RTOS [V6_RTOS]]` (defaults to the pack's final5 and v6; ends with `RESULT all passed`).
   `cd tools/shadowml && python3 test_host.py && python3 test_arm.py && python3 test_fw.py PRE_RTOS BASE_RTOS`.
   `cd tools/re && GRIV_RTOS=... python3 awb_emu_check.py 1 1` (3502/3502) and `python3 shadow_check.py` (400 cases, 0 mismatches).
 - The machine may have only 2 cores: do not run the long suites in parallel with other agents' runs.

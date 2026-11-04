@@ -38,8 +38,7 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-SP = Path('/tmp/claude-0/-home-claude/4982966f-5cf0-5c25-b5a9-c2b6bab6cd69/scratchpad')
-PARAMS = Path(os.environ.get('AWBML_PARAMS', SP / 'learnawb' / 'ffcc_cube_meta.npz'))
+PARAMS = Path(os.environ.get('AWBML_PARAMS', HERE / 'model' / 'ffcc_cube_meta.npz'))      # the trained parameters (committed); AWBML_PARAMS overrides
 CAL_JSON = HERE / 'cal.json'
 
 N = 64

@@ -6,7 +6,7 @@ garbage blocks, empty scenes, mode and idx out of range, hl on and off), edge ca
 corrupted model blobs, a wrong context magic, garbage in every byte of the record that the module does not read. Both the feature
 vector and the result are compared, and the record must come back unchanged.
 
-usage: test_host.py   (env SHADOWML_NRANDOM, SHADOWML_NSAN to scale; needs gcc, numpy and the scratchpad's grdng modules for the DNGs)"""
+usage: test_host.py   (env SHADOWML_NRANDOM, SHADOWML_NSAN to scale; needs gcc, numpy; optional $GRIV_DATA/dng/*.dng (public DPReview GR IV DNGs) add real-photo scenes; docs/griv-re/testing.md section 4)"""
 import ctypes
 import glob
 import os
@@ -23,10 +23,8 @@ import numpy as np
 import ref
 
 HERE = Path(__file__).resolve().parent
-SPD = '/tmp/claude-0/-home-claude/4982966f-5cf0-5c25-b5a9-c2b6bab6cd69/scratchpad'
 NRANDOM = int(os.environ.get('SHADOWML_NRANDOM', 12000))
 NSAN = int(os.environ.get('SHADOWML_NSAN', 3000))
-DNG_GLOBS = ['/mnt/user-data/uploads/Downloads/*.dng', '/mnt/user-data/uploads/Downloads/DPReview_GRIV/*.dng']
 
 
 def build_libs(tmp):
@@ -181,10 +179,15 @@ def loop_blob():
 
 
 def dng_scenes():
-    sys.path.insert(0, f'{SPD}/grdng'); sys.path.insert(0, f'{SPD}/drange')
-    from dngload import load405
+    sys.path.insert(0, str(HERE.parent / 're'))
+    import griv_env
     out = []
-    for g in DNG_GLOBS:
+    d_ = os.environ.get('GRIV_DATA')
+    if not d_ or not (Path(d_) / 'dng').is_dir():
+        print('no $GRIV_DATA/dng/*.dng: the real-photo scenes are skipped (docs/griv-re/testing.md section 4)')
+        return out
+    from dngload import load405
+    for g in [str(Path(d_) / 'dng' / '*.dng')]:
         for f in sorted(glob.glob(g)):
             d = load405(f)
             w, h = d['w'], d['h']

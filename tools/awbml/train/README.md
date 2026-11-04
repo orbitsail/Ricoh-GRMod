@@ -1,0 +1,3 @@
+# tools/awbml/train: training and data-conversion code (reference)
+
+The code that produced `../model/ffcc_cube_meta.npz` and the converted scene sets (`ffcc.py` the FFCC trainer, `cube_eval.py` evaluation, `convert.py` / `stats.py` SimpleCube++ conversion, `fivek_*.py` FiveK conversion, `*_check.py`, `selftest.py`). Scripts only: no data. Paths are relative to `$GRIV_WORK`, a working directory laid out like the session scratchpad (`cubepp_raw/`, `cubepp_gr/`, `fivek_gr/`, `grdng/`, `learnawb/`); they are not part of any test suite and were not re-run after the move. See `docs/griv-re/testing.md` section 4.

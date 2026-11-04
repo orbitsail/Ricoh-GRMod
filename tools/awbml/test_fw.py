@@ -7,17 +7,18 @@ camera does, against the same firmware without it (the v6 RTOS) and against ref.
   sequences (period 4) of mixed scenes and modes against ref.AwbmlSeq;
   operator new called once and the RAM word holds the pointer; the canary check passes; r4-r11 preserved.
 
-usage: test_fw.py [v7 RTOS.bin] [v6 RTOS.bin]  (SP paths below). Needs unicorn and the scratchpad's awbsim / grdng modules."""
+usage: test_fw.py [build RTOS.bin] [v6 RTOS.bin]  (default $GRIV_BASELINES/final5 and v6). Needs unicorn, GRIV_DATA, GRIV_BASELINES, GRIV_RTOS (docs/griv-re/testing.md section 4)."""
 import gc
 import glob
 import random
 import struct
 import sys
 
-SPD = '/tmp/claude-0/-home-claude/4982966f-5cf0-5c25-b5a9-c2b6bab6cd69/scratchpad'
-sys.path[:0] = [f'{SPD}/awbsim', f'{SPD}/grdng', str(__import__('pathlib').Path(__file__).resolve().parent)]
-V7 = sys.argv[1] if len(sys.argv) > 1 else f'{SPD}/cpulut/fw8/v7/RTOS.bin'
-V6 = sys.argv[2] if len(sys.argv) > 2 else f'{SPD}/cpulut/fw8/v6/RTOS.bin'
+_HERE = __import__('pathlib').Path(__file__).resolve().parent
+sys.path[:0] = [str(_HERE.parent / 're'), str(_HERE)]
+import griv_env
+V7 = sys.argv[1] if len(sys.argv) > 1 else griv_env.baseline('final5')
+V6 = sys.argv[2] if len(sys.argv) > 2 else griv_env.baseline('v6')
 
 import numpy as np
 from unicorn import UC_HOOK_CODE
@@ -26,7 +27,7 @@ from unicorn.arm_const import UC_ARM_REG_R4, UC_ARM_REG_PC, UC_ARM_REG_SP
 import awb_ref as R
 import fwemu
 import hcommon as H
-import scenes as SC
+import synth_scenes as SC
 from emuutil import A_OBJ
 
 import importlib.util
@@ -148,7 +149,7 @@ def build_scenes():
         room = SC.relit_scene(rid, 2700, 3.5)
         scs.append((f'room {rid}', room))
         scs.append((f'lamp {rid}', SC.add_lamp(room, rng=rng, frac=0.15, dEV=3.0, wash=2.0)))
-    for p in sorted(glob.glob(f'{SPD}/fivek_gr/*.npz'))[::40]:
+    for p in sorted(glob.glob(str(griv_env.data('fivek_gr')) + '/*.npz'))[::40]:
         room = SC.fivek_relit(p, 2700, 3.0)
         scs.append(('fivek room', room)); scs.append(('fivek lamp', SC.add_lamp(room, rng=rng, frac=0.2, dEV=3.0, wash=2.0)))
     # too few usable blocks: the camera's own result must stay (fallback), and a scene just above the 5 % line
@@ -257,7 +258,7 @@ def main():
     # ---- 2b. the capture gain words S+0x68 / S+0x6E: a still equals ref.awbml_ref(still_s = those words), so it scales exactly with
     # them; at 0x2000 / 0x2000 it is bit-for-bit the previous build's (v8c); a live view call ignores them (byte-identical to v8c).
     import os
-    V8C = os.environ.get('V8C_RTOS', f'{SPD}/cpulut/fw8/v8c/RTOS.bin')
+    V8C = griv_env.baseline_env('V8C_RTOS', 'v8c')
     sbad2 = nsc = nunity = nlive_same = 0
     ratios = []
     for si in list(range(0, len(SS), 11))[:30]:
@@ -294,7 +295,7 @@ def main():
     import struct as _st, importlib
     from unicorn import UC_HOOK_CODE as _HC
     from unicorn.arm_const import UC_ARM_REG_R0 as _R0, UC_ARM_REG_R1 as _R1, UC_ARM_REG_SP as _SP, UC_ARM_REG_LR as _LR, UC_ARM_REG_PC as _PC
-    V81 = _os.environ.get('V81_RTOS', f'{SPD}/cpulut/final2/RTOS.bin')
+    V81 = griv_env.baseline_env('V81_RTOS', 'final2')
     fb = lambda x: _st.unpack('<I', _st.pack('<f', x))[0]
     eb = Fw(V81).e                                              # an emulator with the stock still builder
     eb.mu.hook_add(_HC, lambda uc, a_, s_, u_: uc.reg_write(_PC, uc.reg_read(_LR)), begin=0x538f75fc, end=0x538f75fc + 4)
@@ -372,7 +373,7 @@ def main():
         gc.collect()
     print(f'5. live view exposure from the property store: {n5} live calls ({nstock} stock still builder runs, {nacc} accepted exposures), {nst5} stills; mismatches {bad5}')
     # ---- 6. final5 vs the previous firmware (final4) where the exposure source is unusable (no store): identical live and still outputs with S+0x68/6E = 0x2000, computing / cached / interleaved
-    V3 = _os.environ.get('FINAL3_RTOS', f'{SPD}/cpulut/final4/RTOS.bin')
+    V3 = griv_env.baseline_env('FINAL3_RTOS', 'final4')
     n6 = bad6 = 0
     for si in list(range(1, len(SS), 17 if quick else 7))[:8 if quick else 30]:
         n, S0 = SS[si]
@@ -409,7 +410,8 @@ def main():
           f'average over a period of {ref.PERIOD}: +{int((np.mean(ins["compute"]) + (ref.PERIOD - 1) * np.mean(ins["cached"])) / ref.PERIOD - v6m):,}')
     # ---- 4. the image against the previous verified build: only the call word and the appended context / module / stub / tables differ
     import os
-    prev = os.environ.get('PREV_RTOS', f'{SPD}/cpulut/fw8/v7b/RTOS.bin')
+    if not os.environ.get('PREV_RTOS'): os.environ.setdefault('ALLOW_SHADOW_HOOKS', '1')      # the default previous build (final4) has the shadow hooks too
+    prev = griv_env.baseline_env('PREV_RTOS', 'final4')
     if os.path.exists(prev):
         a, b = open(prev, 'rb').read(), open(V7, 'rb').read()
         base = 0x53000000

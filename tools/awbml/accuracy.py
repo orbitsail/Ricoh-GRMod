@@ -12,8 +12,7 @@ import ref
 import scenes
 from calib import truth_q16
 
-SP = ref.SP
-sys.path.insert(0, str(SP / 'learnawb'))
+sys.path.insert(0, str(ref.HERE / 'train'))      # ffcc.py
 STAT = scenes.STAT_F
 
 
@@ -47,7 +46,7 @@ def float_model():
         import ffcc as M
     except Exception:
         return None
-    p = np.load(SP / 'learnawb' / 'ffcc_cube_meta.npz')
+    p = np.load(ref.PARAMS)
     P = dict(F=jnp.asarray(p['F']), B=jnp.asarray(p['B']))
 
     def est(s, ev):

@@ -3,6 +3,8 @@
 gallery and studio scenes, bins err^2 against R_post, and fits the monotone R_eff = f(R_post) table (17 knots)."""
 import math
 import sys
+import tempfile
+from pathlib import Path
 
 import numpy as np
 
@@ -10,7 +12,7 @@ import ref
 import scenes
 from calib import truth_q16
 
-CACHE = ref.SP / 'awbml_work' / 'calib_r.npz'
+CACHE = Path(tempfile.gettempdir()) / 'awbml_calib_r.npz'
 
 
 def windows(rng, n):

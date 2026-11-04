@@ -40,18 +40,45 @@ Rule 1 of this project: **an emulator result is only as good as its list of stub
 | the stock shadow Y builder | skipped or fed with an array | needs OS objects |
 | data sets | converted statistics (SimpleCube++ → GR IV stats, FiveK → GR IV stats), public DNG statistics (firmware 1.01) | real sensor on firmware 1.11 |
 
-## 4. External inputs the repository tests need (not committed)
+## 4. External inputs the repository tests need (not committed): the private pack
 
-These were in the session scratchpad that is deleted. **Without them the suites cannot run as is.** The scripts hard-code the old scratchpad path in a constant (`SP` / `SPD`); edit that constant (or the `AWBML_PARAMS` env for the model).
+Everything the suites need is the repository **plus one private folder** (the "private pack", made from the session scratchpad by `tools/re/pack_private.py SCRATCHPAD STAGING`). Three environment variables point into it; a missing variable or file stops a script with a message that names the variable and this section (`tools/re/griv_env.py`).
 
-| need | used by | note |
-|---|---|---|
-| trained parameters `ffcc_cube_meta.npz` (filters `F[2][64][64]`, biases `B[3][64][64]`) | `tools/awbml/ref.py` (`PARAMS`, env `AWBML_PARAMS`) → `build_tables` → `gen.py`, all AWB tests | **not in the repository; irreplaceable except by retraining (about 48 minutes on cloud CPUs for two models).** The committed `awbml-data.ts` holds the same information in derived form (FSPEC = FFT of F in Q16, BIAS = B in Q12). An archive of the earlier session kept a copy. |
-| scene sets: SimpleCube++ converted (`cubepp_gr/`), `learnawb/cube_eval_preds.npz`, DPReview statistics (`grdng/ext/*.npz`, `summary.json`), studio statistics (`studio/*.npz`), FiveK converted (`fivek_gr/*.npz`) | `tools/awbml/scenes.py`, `test_host.py`, `test_arm.py`, `test_fw.py` | the SimpleCube++ conversion (45 MB) can be regenerated from the 2 GB public dataset with the earlier session's `convert.py` (not in the repository); the GR IV DNGs are the public DPReview files |
-| `grdng/scenes.py`, `awbsim/*`, `drange/*` helper modules | `tools/awbml/test_fw.py`, `tools/shadowml/test_fw.py`, `test_host.py` | the `awbsim` / `drange` helpers are now in `tools/re/`; `grdng/scenes.py` (scene synthesis: relight, lamp, highlights) is not |
-| baseline builds (RTOS.bin of earlier builds): `fw8/{v6,v7,v7b,v8c}`, `final2`, `final4`, `fw9/{pre,base}` | `test_fw.py` | rebuild from the commits in history.md with the options listed there |
-| official firmware | the builder | `core/testdata/private/official.bin` (gitignored) |
-| shadow model/training data | `tools/shadowml/test_host.py` etc. read `tools/shadowml/model/model_final.bin` by default; the committed `shadowml-data.ts` embeds the same blob (sha256 `b3895f1c...`) | `model/` is not in the repository; use env `SHADOWML_MODEL=path` |
+```
+private_pack/
+  data/            GRIV_DATA        scene sets (same relative layout the scripts expect)
+    cubepp_gr/*.npz                 SimpleCube++ converted to GR IV statistics (2236 files, 42 MB)
+    learnawb/cube_eval_preds.npz    the model's predictions on the cube set (used by scenes.load_cube)
+    grdng/ext/*.npz, summary.json   DPReview GR IV statistics (v1.01 files) and their EXIF rows
+    grdng/v6_tables.npz             small, used by the training/eval scripts only
+    studio/*.npz                    studio shots
+    fivek_gr/*.npz                  FiveK converted (780 files, 12 MB; test_fw samples every 40th)
+    dng/*.dng                       optional: public DPReview GR IV DNGs; shadowml/test_host.py adds real-photo scenes when present
+  baselines/       GRIV_BASELINES   <name>/RTOS.bin, the decoded RTOS section of earlier builds
+    v6 v7 v7b v8c final2 final4 final5 final5_ns fw9_pre fw9_base
+  official/        the official firmware
+    official.bin                    the 1.11 container; copy to core/testdata/private/official.bin for the builder (gitignored)
+    RTOS_1.11.bin                   its decoded RTOS section = GRIV_RTOS for tools/re, fwemu and all test_fw.py
+    official_1.20/fwdc248b.bin      the 1.20 container that was examined (labelled; no test uses it)
+  notes/           the session's scratch notes (*.md, *.txt, f_*.txt disassembly listings) with their relative paths
+```
+
+```
+export GRIV_DATA=/path/private_pack/data GRIV_BASELINES=/path/private_pack/baselines GRIV_RTOS=/path/private_pack/official/RTOS_1.11.bin
+cp /path/private_pack/official/official.bin core/testdata/private/official.bin
+```
+
+What is now in the repository (it used to be scratchpad-only):
+
+| item | where |
+|---|---|
+| trained parameters `ffcc_cube_meta.npz` (filters `F[2][64][64]`, biases `B[3][64][64]`; 164 KB) | `tools/awbml/model/` (`ref.PARAMS`, env `AWBML_PARAMS` overrides). `gen.py` reproduces `awbml-data.ts` (sha256 `89122871...`) from it |
+| shadow model blob `model_final.bin` (sha256 `b3895f1c...` = the blob embedded in `shadowml-data.ts`) | `tools/shadowml/model/` (force-added: `*.bin` is gitignored); env `SHADOWML_MODEL` overrides |
+| scene synthesis (relight, lamp, highlights; `settings()` builds the S block) | `tools/awbml/synth_scenes.py` (imported as `SC` by `test_fw.py`; `scenes.py` is the evaluation-scene loader) |
+| `awbsim` / `drange` helpers | `tools/re/` (`awb_ref`, `fwemu`, `hcommon`, `emuutil`, `dngload`, `shadow_ref`); the tests put `tools/re` on `sys.path` |
+| training and data-conversion code (reference only; no data) | `tools/awbml/train/` (ffcc.py, cube_eval.py, convert.py for SimpleCube++, stats.py, FiveK proc/run, checks) and `tools/shadowml/train/` (pipeline, model, tools). Their paths are relative to `$GRIV_WORK` (a working directory laid out like the old scratchpad: `cubepp_raw/`, `fivek_gr/`, `grdng/`, ...) |
+
+Still not reproducible from the repository: the raw public data sets (SimpleCube++ ~2 GB, FiveK, the DPReview DNG downloads; all public) and the conversion outputs of the pack (regenerate with `tools/awbml/train/convert.py` etc. from the downloads if the pack is lost). The baseline builds can also be rebuilt from the commits in history.md. The official firmware is the user's file and is never committed.
 
 ## 5. How to run
 
@@ -67,10 +94,10 @@ python3 test_host.py              # env AWBML_NSEQ (300), AWBML_NRANDOM (3000), 
 python3 test_arm.py [n_scenes n_random]    # default 40 80
 python3 test_fuzz.py              # env FUZZ_SEQ (150)
 gcc -O2 -DAWBML_HOST -ffp-contract=off -o /tmp/test_fl8 test_fl8.c && /tmp/test_fl8
-python3 test_fw.py NEW_RTOS.bin V6_RTOS.bin   # env AWBML_QUICK=1 (every 4th scene), V8C_RTOS, V81_RTOS, FINAL3_RTOS, PREV_RTOS, EXPECT_SHADOW=1 (also accept the shadow hook differences)
+python3 test_fw.py [NEW_RTOS.bin [V6_RTOS.bin]]   # default $GRIV_BASELINES/final5 and v6; env AWBML_QUICK=1 (every 4th scene), V8C_RTOS, V81_RTOS, FINAL3_RTOS (the previous build, default final4), PREV_RTOS (strict image check; default final4 with ALLOW_SHADOW_HOOKS), EXPECT_SHADOW=1 (PREV_RTOS is the same module without the shadow part)
 # shadow module
 cd ../shadowml
-python3 test_host.py ; python3 test_arm.py [n_random] ; python3 test_fw.py PRE_RTOS.bin BASE_RTOS.bin ; python3 stack_fw.py
+python3 test_host.py ; python3 test_arm.py [n_random] ; python3 test_fw.py [PRE_RTOS.bin BASE_RTOS.bin] ; python3 stack_fw.py      # test_fw defaults: $GRIV_BASELINES/fw9_pre and fw9_base
 # stock-model checks (set GRIV_RTOS first)
 cd ../re ; python3 awb_emu_check.py 1 1 ; python3 awb_emu_check.py 7 4 ; python3 shadow_check.py
 # TypeScript
