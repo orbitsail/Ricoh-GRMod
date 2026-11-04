@@ -55,7 +55,11 @@ private_pack/
     fivek_gr/*.npz                  FiveK converted (780 files, 12 MB; test_fw samples every 40th)
     dng/*.dng                       optional: public DPReview GR IV DNGs; shadowml/test_host.py adds real-photo scenes when present
   baselines/       GRIV_BASELINES   <name>/RTOS.bin, the decoded RTOS section of earlier builds
-    v6 v7 v7b v8c final2 final4 final5 final5_ns fw9_pre fw9_base
+    v6 v7 v7b v8c final2 final4 final5 final5_ns shadow_pre shadow_base
+    shadow_pre   = scratchpad cpulut/fw14/pre: stock + the current shadowLearn module (per-path scratch, trained model), the PRE of
+                   shadowml/test_fw.py. Earlier shadow builds (fw9 and before) carry the old module and fail its module-location check.
+    shadow_base  = scratchpad cpulut/fw9/base: the same stock image without shadowLearn, the BASE of test_fw.py. The two images differ only by
+                   shadowLearn; no build without the AWB module is needed (cpulut/fw12/nawb_RTOS.bin is not used).
   official/        the official firmware
     official.bin                    the 1.11 container; copy to core/testdata/private/official.bin for the builder (gitignored)
     RTOS_1.11.bin                   its decoded RTOS section = GRIV_RTOS for tools/re, fwemu and all test_fw.py
@@ -97,7 +101,7 @@ gcc -O2 -DAWBML_HOST -ffp-contract=off -o /tmp/test_fl8 test_fl8.c && /tmp/test_
 python3 test_fw.py [NEW_RTOS.bin [V6_RTOS.bin]]   # default $GRIV_BASELINES/final5 and v6; env AWBML_QUICK=1 (every 4th scene), V8C_RTOS, V81_RTOS, FINAL3_RTOS (the previous build, default final4), PREV_RTOS (strict image check; default final4 with ALLOW_SHADOW_HOOKS), EXPECT_SHADOW=1 (PREV_RTOS is the same module without the shadow part)
 # shadow module
 cd ../shadowml
-python3 test_host.py ; python3 test_arm.py [n_random] ; python3 test_fw.py [PRE_RTOS.bin BASE_RTOS.bin] ; python3 stack_fw.py      # test_fw defaults: $GRIV_BASELINES/fw9_pre and fw9_base
+python3 test_host.py ; python3 test_arm.py [n_random] ; python3 test_fw.py [PRE_RTOS.bin BASE_RTOS.bin] ; python3 stack_fw.py      # test_fw defaults: $GRIV_BASELINES/shadow_pre and shadow_base
 # stock-model checks (set GRIV_RTOS first)
 cd ../re ; python3 awb_emu_check.py 1 1 ; python3 awb_emu_check.py 7 4 ; python3 shadow_check.py
 # TypeScript

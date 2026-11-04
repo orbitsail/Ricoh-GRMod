@@ -3,7 +3,7 @@
 """Collects the private inputs of the test suites from a session scratchpad into one staging directory (see docs/griv-re/testing.md section 4):
 
   data/        GRIV_DATA: cubepp_gr/ learnawb/cube_eval_preds.npz grdng/ext/ grdng/v6_tables.npz studio/ fivek_gr/
-  baselines/   GRIV_BASELINES: <name>/RTOS.bin of the earlier builds (v6 v7 v7b v8c final2 final4 final5 final5_ns fw9_pre fw9_base)
+  baselines/   GRIV_BASELINES: <name>/RTOS.bin of the earlier builds (v6 v7 v7b v8c final2 final4 final5 final5_ns shadow_pre shadow_base)
   official/    official.bin (the official 1.11 container the builder reads: core/testdata/private/official.bin), RTOS_1.11.bin (its decoded RTOS,
                GRIV_RTOS), official_1.20/ (the 1.20 container that was examined; labelled, not used by the tests)
   notes/       the scratch notes (*.md, *.txt, f_*.txt disassembly listings) with their relative paths
@@ -15,7 +15,7 @@ from pathlib import Path
 
 DATA = ['cubepp_gr', 'learnawb/cube_eval_preds.npz', 'grdng/ext', 'grdng/v6_tables.npz', 'studio', 'fivek_gr']
 BASE = {'v6': 'cpulut/fw8/v6', 'v7': 'cpulut/fw8/v7', 'v7b': 'cpulut/fw8/v7b', 'v8c': 'cpulut/fw8/v8c', 'final2': 'cpulut/final2', 'final4': 'cpulut/final4',
-        'final5': 'cpulut/final5', 'final5_ns': 'cpulut/final5/ns', 'fw9_pre': 'cpulut/fw9/pre', 'fw9_base': 'cpulut/fw9/base'}
+        'final5': 'cpulut/final5', 'final5_ns': 'cpulut/final5/ns', 'shadow_pre': 'cpulut/fw14/pre', 'shadow_base': 'cpulut/fw9/base'}
 OFFICIAL = {'official/official.bin': 'fw/unz/fwdc248b.bin', 'official/RTOS_1.11.bin': 're/RTOS.bin', 'official/official_1.20/fwdc248b.bin': 'fw/unz120/fwdc248b.bin'}
 NOTE_SKIP = ('node_modules', 'cubepp_raw', 'photo', 'fk', 'grmod_app')
 NOTE_MAX = 2_000_000

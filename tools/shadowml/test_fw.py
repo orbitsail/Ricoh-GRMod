@@ -15,7 +15,7 @@ camera does, against the same firmware without it (the base RTOS) and against re
   6. The image against the build without shadowLearn: only the hook word, TB[4], the appended area and the checksum
      compensation word differ.
 
-usage: test_fw.py [pre/RTOS.bin (with shadowLearn)] [base/RTOS.bin]   (default $GRIV_BASELINES/fw9_pre and fw9_base; needs unicorn, GRIV_BASELINES,
+usage: test_fw.py [pre/RTOS.bin (with shadowLearn)] [base/RTOS.bin]   (default $GRIV_BASELINES/shadow_pre and shadow_base; needs unicorn, GRIV_BASELINES,
 GRIV_RTOS and the helpers in tools/re; docs/griv-re/testing.md section 4)"""
 import os
 import random
@@ -28,8 +28,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent / 're'), str(HERE)]
 import griv_env
-PRE = sys.argv[1] if len(sys.argv) > 1 else griv_env.baseline('fw9_pre')
-BASE = sys.argv[2] if len(sys.argv) > 2 else griv_env.baseline('fw9_base')
+PRE = sys.argv[1] if len(sys.argv) > 1 else griv_env.baseline('shadow_pre')
+BASE = sys.argv[2] if len(sys.argv) > 2 else griv_env.baseline('shadow_base')
 
 import numpy as np
 from unicorn import UC_HOOK_CODE
@@ -351,7 +351,8 @@ def main():
 
     # ---------------------------------------------------------------- 5. instruction counts of the whole core
     ins = {'base Auto (stock, all-zero Y)': [], 'hooked still': [], 'hooked LV computing': [], 'hooked LV held': [], 'fixed level Low': []}
-    for fn, w, h, R, G, B, C in dngs[:6]:
+    p5 = dngs[:6] or [(f'rnd{i}',) + tuple(TH.scene(rng)) for i in range(4)]   # without DNG scenes: random ones (the counts then say less about real photos)
+    for fn, w, h, R, G, B, C in p5:
         for m, key in ((0, 'hooked still'), (1, 'hooked LV computing')):
             P = pad(TH.make_P(m, w, h, R, G, B, C, rng))
             hooked.mu.mem_write(SLOT, bytes(4)); hooked.set_model(model_default)
