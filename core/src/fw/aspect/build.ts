@@ -36,6 +36,7 @@ import { installMonoUnlock } from './monounlock';
 import { CINEMA_STYLES, installExtraSlots, installHalation } from './slots';
 import { installCpuLut } from './cpulut';
 import { installBrightAuto } from './brightauto';
+import { installChromaNr } from './chromanr';
 import { installAwbBlend } from './awbblend';
 import { installAwbFit } from './awbfit';
 import { installAwbLearn } from './awbml';
@@ -167,6 +168,8 @@ export interface TestOptions {
   awbLearn?: boolean;
   /** Experimental: a learned Auto for Shadow Correction (see `shadowml.ts`); appended after the learned white balance. */
   shadowLearn?: boolean;
+  /** The half-resolution chroma noise reduction pass from ISO 3200 instead of 12800 (see `chromanr.ts`). */
+  chromaNr?: boolean;
 }
 
 export interface AspectResult {
@@ -1106,6 +1109,7 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
   // date imprint work on the corrected picture.
   if (cpuLut.length > 0) installCpuLut(patch, cpuLut);
   if (test.brightAuto) installBrightAuto(patch, test.brightAuto === 'balanced' ? 'balanced' : 'bright');
+  if (test.chromaNr) installChromaNr(patch);
   if (test.awbFit && test.awbBlend) throw new FirmwareError('internal', 'awbFit replaces awbBlend; set only one');
   if (test.awbBlend) installAwbBlend(patch, test.awbBlend);
   if (test.awbFit) installAwbFit(patch);

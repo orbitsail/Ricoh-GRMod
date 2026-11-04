@@ -37,3 +37,5 @@ export { installAwbBlend, installAwbTables, officialAutoTables } from './awbblen
 export { installAwbFit } from './awbfit';
 export { installAwbLearn } from './awbml';
 export { installShadowLearn } from './shadowml';
+export { CHROMA_NR_FINGERPRINT, CHROMA_NR_ISO, CHROMA_NR_OFFICIAL_ISO, CHROMA_NR_OFFICIAL_WORD, CHROMA_NR_SITE, CHROMA_NR_WORD, applyChromaNr, chromaNrState, installChromaNr } from './chromanr';
+export type { ChromaNrResult } from './chromanr';

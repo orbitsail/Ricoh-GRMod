@@ -280,6 +280,8 @@ export interface BuildOptions {
   awbLearn?: boolean;
   /** A learned Auto for Shadow Correction (`aspect/shadowml.ts`); experimental. */
   shadowLearn?: boolean;
+  /** Chroma-only noise reduction: the half-resolution colour NR pass from ISO 3200 instead of 12800 (`aspect/chromanr.ts`). */
+  chromaNr?: boolean;
 }
 
 export interface ShutdownImage {
@@ -986,7 +988,7 @@ export class Engine {
     if (adjSoftFocus && clarity.length > 0) throw new FirmwareError('bad-clarity', 'soft focus on the ADJ lever and on the clarity table cannot be combined');
     if (dateStamp && clarity.length > 0) throw new FirmwareError('bad-clarity', 'the date imprint cannot be combined with the clarity-table soft focus of 0.4.x');
     if (extraSlots.length > 0 && clarity.length > 0) throw new FirmwareError('bad-clarity', 'added slots cannot be combined with the clarity-table soft focus of 0.4.x');
-    if (edits.length === 0 && ratios.length === 0 && clarity.length === 0 && !adjSoftFocus && !dateStamp && !monoUnlock && extraSlots.length === 0 && pictures.length === 0 && !lookLayout && !directFlash) throw new FirmwareError('bad-edit', 'nothing to change');
+    if (edits.length === 0 && ratios.length === 0 && clarity.length === 0 && !adjSoftFocus && !dateStamp && !monoUnlock && extraSlots.length === 0 && pictures.length === 0 && !lookLayout && !directFlash && !(options && options.chromaNr)) throw new FirmwareError('bad-edit', 'nothing to change');
     if (Object.keys(cinemaHalation).length > 0 && clarity.length > 0) throw new FirmwareError('bad-clarity', 'halation cannot be combined with the clarity-table soft focus of 0.4.x');
     const features = { adjSoftFocus, guard: clarity.length === 0 && options.guard !== false, ...(Object.keys(cinemaHalation).length > 0 ? { cinemaHalation } : {}), ...(dateStamp ? { dateStamp } : {}), ...(monoUnlock ? { monoUnlock } : {}), ...(extraSlots.length > 0 ? { extraSlots } : {}), ...(pictures.length > 0 ? { shutdown: { pictures, factory: aspect.factoryShutdownJpegs(this.decoded) } } : {}), ...(lookLayout ? { lookLayout } : {}), ...(directFlash ? { directFlash } : {}) };
     const test = {
@@ -997,6 +999,7 @@ export class Engine {
       ...(options && options.awbFit ? { awbFit: true } : {}),
       ...(options && options.awbLearn ? { awbLearn: true } : {}),
       ...(options && options.shadowLearn ? { shadowLearn: true } : {}),
+      ...(options && options.chromaNr ? { chromaNr: true } : {}),
     };
     const { decoded: _decoded, ...rest } = await buildFirmware(this.raw, edits, ratios, clarity, features, test);
     return rest;
