@@ -49,8 +49,8 @@ DNG 厂商注释里可用来做测试数据的标签、CPU 套 LUT 实验、模�
    compare against real DNGs and list every stubbed input of the harness (testing.md).
 2. **A float that looks like the live exposure may be a user setting.** The record words at +0x38D20.. (Av, Tv, ISO, EC) are the user's dial
    settings, written only when a value is set (an auto ISO leaves them alone). The live exposure is the AE's, published through the property
-   store (exposure.md). Two wrong turns came from this: "word4 is a Bv" and "0x537FDA48 etc. are getters".
-3. **Functions named "getter" by pattern may be writers.** 0x537FDA48, 0x537FDB00 and 0x537FE38C are EXIF tag writers
+   store (exposure.md). Two wrong turns came from this: "word4 is a Bv" and "the EXIF writers 0x537FD980 etc. are getters".
+3. **Functions named "getter" by pattern may be writers.** 0x537FD980 (Tv), 0x537FDB00 (Av) and 0x537FE310 (ISO) are EXIF tag writers
    (`CommonExifEntryDataSetter`), not getters of the exposure.
 4. **Two tasks, no locks.** `LiveViewWb` and `WbCalcProcess` call the same Auto estimate on an SMP T-Kernel without any lock, so any module state
    needs a region per path (awb.md 2.11, 3.4). The shadow hook has the same split. Live-view-only state (throttle, filter) must never be touched by a still.

@@ -9,7 +9,7 @@ Why it matters: the AWB scene prior uses the scene brightness `e30 = 256 * (Av +
 |---|---|---|
 | awbmgr Follow-up 3: LV e30 is probably 0 (record word +0x38D30 never written) | true that nothing writes +0x38D30, but irrelevant: the live exposure comes from the AE's property buffers (section 2) | lvexp |
 | awbmgr Follow-up 6 / "mode 2" (8.0 final3, da75b02): the floats at record +0x38D20/24/28 (Av, Tv, ISO) are the published exposure properties "what the UI shows"; LV Bv = still e30 | they are the **user's dial settings**, written by the property setters only when a numeric value is set (an Auto ISO, value 0 or >= 0xFFFE, sets an invalid flag and leaves the float alone). Not the live exposure | lvexp, review final3 item 5 |
-| review final3: 0x537FDA48 (Tv), 0x537FDB00 (Av), 0x537FE38C (ISO) are getters that use +0x38D24 etc. only in manual modes, contradicting "what the UI shows" | they are **EXIF tag writers** (`CommonExifEntryDataSetter`, class typeinfo 0x53FA639C, vtable 0x53FA6348, dispatcher 0x537FE414 on EXIF tag ids). They write the property value into the EXIF only when the exposure mode is set by hand and fall back to +0xB98/+0xB9C/+0xBA0 otherwise | lvexp |
+| review final3: 0x537FDA48 (Tv), 0x537FDB00 (Av), 0x537FE38C (ISO) are getters (those are the Tv and ISO property-float branches and the Av entry; the function entries are Tv 0x537FD980, Av 0x537FDB00, ISO 0x537FE310, with the property-float branches at 0x537FDA48, 0x537FDB80, 0x537FE38C; review final5) that use +0x38D24 etc. only in manual modes, contradicting "what the UI shows" | they are **EXIF tag writers** (`CommonExifEntryDataSetter`, class typeinfo 0x53FA639C, vtable 0x53FA6348, dispatcher 0x537FE414 on EXIF tag ids). They write the property value into the EXIF only when the exposure mode is set by hand and fall back to +0xB98/+0xB9C/+0xBA0 otherwise | lvexp |
 | `+0x38D20..` words 0..2 "likely mirror P[0xB98], P[0xB9C], P[0xBA0]" | they do not mirror the still fields in auto modes (they are stale or invalid there) | lvexp |
 
 8.2 (commit 0cecdaa, final5) replaced the property-float read ("mode 2" of da75b02) by the AE read below.
@@ -99,3 +99,18 @@ Open [I]:
 **The single camera log that would settle 1 to 3**: a log written from the hook (or from a debug build) on every computing live view call and on every still, with one record per call containing: path (live / still), `S+0x24`, `S+0x28`, `S+0x2C`, `S+0x30`, `S+0x51`, `S+0x68`, `S+0x6E`, `S+0x70`; for live view additionally the three raw words `D+0x4D8/4DC/4E0` (hex) and the pair `X[0]`, `X[1]`, plus a frame counter. Shoot: a bright and a dim scene, highlight correction on and off, exposure compensation changed in steps,
 a manual-exposure dial change, a half-press then a full press for each. From it: (a) does the live record match the still record taken seconds later (questions 2 and 3, per HC state); (b) the lag after a dial change (question 1); (c) the real values of `S+0x68/0x6E` on both paths (awb.md 2.9) in the same log.
 This log has not been taken; no camera access existed in the sessions that produced these notes.
+
+## Review of the 8.2 build (final5) [E unless tagged]
+
+- Verdict: OK to flash. Stills byte-identical to 8.1; any failure of the new read gives exactly 8.1's live view (9 failure states x 9 calls compared byte for byte).
+- The read is reached only on computing live view calls; movie (S+0x70 == 4) returns before any read; every link is checked before it is dereferenced
+  (45 link and edge cases with a read hook); the double read compares both pointers and all three words, with one retry.
+- Pool 0xD is the "INFO" pool: base 0x5D7A0000, 1 MB, set up at 0x538E3BE0 [C]. So D lies in the accepted RAM range and the feature engages on the camera.
+  Possible future hardening (not done): accept the buffers only inside [0x5D7A0000, 0x5D8A0000 - 0x1090] and drop the 0x40000000 range.
+- Every accepted range is Normal RW identity-mapped memory in the boot L1 table; the device region 0x00000000..0x3FFFFFFF is never accepted.
+- Quantisation: the module's fl8 (machine code, transliterated and checked in unicorn) equals a float32 model of the stock builder (non-fused vmla/vnmls,
+  vcvt toward zero) for all 2^32 patterns; end to end it equals the stock still builder 0x53933D84 on 3,216 exposures. Assumes FPSCR round-to-nearest [I].
+- Stack: deepest point below the estimate entry 592 B (8.1: 616 B).
+- After boot the guard stays 0 until the singleton exists, and E is published only after its constructor has set the vtable, X and both buffers, so early calls fall back.
+  Until the AE's first publish, D holds the constructor's values (or the last ones after playback); at most the first computing call uses them [I].
+- Under 8.1 the live view's missing exposure differed from the true exposure by a median R/B factor of 1.051 on the test scenes.
