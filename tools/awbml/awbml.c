@@ -62,8 +62,8 @@ struct awbml_ctx {
   const u32 *ln;                /* [257] */
   u32 period;                   /* live view: compute on every period-th call (1: always) */
   u32 af89;                     /* nonzero: a gain override also clears Auto+0xAF89 (the camera's all-zero-sums hold flag) */
-  u32 lv_exp;                   /* live view only: 0 = use S+0x24 / S+0x30; 1 = treat the exposure data as missing; 2 = read the exposure from the live view record
-                                   (floats at S[0] - 0x4D2C0 + 0x38D20), else as 1 */
+  u32 lv_exp;                   /* live view only: 0 = use S+0x24 / S+0x30; 1 = treat the exposure data as missing; 2 = read the AE's current Tv / Av / Sv from the property store
+                                   (see lv_exposure), else as 1 */
   u32 lv_scale;                 /* live view: nonzero = the output gains are scaled by this call's S+0x68 / S+0x6E like a still's (the cached model-unit
                                    result and the filter state stay unscaled); 0 = unscaled. Stills are always scaled. */
 };
@@ -549,43 +549,89 @@ static u32 scale_gain(u32 g, u32 s) {
   return o > 0xFFFF ? 0xFFFF : o;
 }
 
-/* Live view record (S[0] = record + 0x4D2C0): Av, Tv, Sv as IEEE floats in APEX half-stop units at +0x38D20 / 24 / 28. */
-#ifndef AWBML_RAM_LO
+/* Live view exposure source (fw 1.11, fixed addresses): the AE publishes its current Tv / Av / Sv (IEEE floats, APEX, continuous) into the
+ * property store's read buffer D = X[0], X = [E + 0x518], E = the ComPropIf singleton [0x55379610] (guard word 0x55379608, bit 0), vtable 0x53F8EDE8;
+ * Tv = D+0x4D8, Av = D+0x4DC, Sv = D+0x4E0. A still copies the same three floats into rec+0xB9C / 0xB98 / 0xBA0 and the still builder (0x53933D80)
+ * quantises them: na = (int)(68 + 8 Av) - 68, nt = (int)(68 + 8 Tv) - 68, ns = (int)(8 Sv - 8) + 8, S+0x24 = 32 na, S+0x30 = 32 (na + nt - ns).
+ * The ranges are the host / emulator tests' addresses when AWBML_HOST (offsets into the test memory) or the -D values of the ARM test. */
+#ifndef AWBML_GUARD_ADDR
 #ifdef AWBML_HOST
-#define AWBML_RAM_LO 0x10000u   /* host tests: addresses are offsets into the test memory */
+#define AWBML_GUARD_ADDR 0x100u
+#define AWBML_ESLOT_ADDR 0x110u
+#define AWBML_RAM_LO 0x10000u
 #define AWBML_RAM_HI 0x100000u
+#define AWBML_RAM2_LO 0x2000u
+#define AWBML_RAM2_HI 0xA000u
 #else
+#define AWBML_GUARD_ADDR 0x55379608u
+#define AWBML_ESLOT_ADDR 0x55379610u
 #define AWBML_RAM_LO 0x55000000u
-#define AWBML_RAM_HI 0x60000000u
+#define AWBML_RAM_HI 0x80000000u
+#define AWBML_RAM2_LO 0x40000000u
+#define AWBML_RAM2_HI 0x53000000u
 #endif
 #endif
+#define AWBML_VTABLE 0x53F8EDE8u
 #ifdef AWBML_HOST
-#define REC32(p) (*(const u32 *)(awbml_host_base + (p)))
+extern u32 awbml_host_rd32(u32 addr);            /* host tests: counts the reads so a test can change a word between two */
+#define REC32(p) awbml_host_rd32(p)
 #else
-#define REC32(p) (*(const u32 *)(p))
+#define REC32(p) (*(const volatile u32 *)(p))
 #endif
 
-/* trunc(8 x) of the float with bits b, or a rejection (-1) for a NaN, an infinity, or |x| >= 2^14; the integer part is
- * returned through *n (sign handled). Zero and denormals give 0. */
-static int float8(u32 b, i32 *n) {
-  u32 e = (b >> 23) & 255, m = (b & 0x7FFFFFu) | 0x800000u, v;
-  if (e == 255 || e > 127 + 13) return -1;
-  if (e == 0) v = 0;
-  else if (e >= 147) v = m << (e - 147);
-  else if (147 - e >= 32) v = 0;
-  else v = m >> (147 - e);
-  *n = (b >> 31) ? -(i32)v : (i32)v;
+/* trunc(fl32(base + 8 x)) of the float with bits b, exactly as the camera's vmla / vnmls (a product by 8 is exact, the sum is rounded to
+ * nearest even to 24 bits) followed by vcvt.s32.f32 (toward zero): 68 + 8 x (base 68) or 8 x - 8 (base -8). Returns -1 for a NaN, an infinity,
+ * |x| >= 16 and a sum <= 0 (all of them out of the accepted ranges anyway); else the integer in *n. Integer only. */
+static int fl8(u32 b, i32 base, i32 *n) {
+  u32 e = (b >> 23) & 255, m = b & 0x7FFFFFu, M, st = 0, v, L, r, rem, half;
+  i64 vv;
+  if (e == 255 || e > 130) return -1;
+  if (e) m |= 0x800000u; else e = 1;               /* denormal: no implicit bit */
+  if (e >= 123) M = m << (e - 123);                 /* |8 x| in units of 2^-24 */
+  else if (e > 100) { r = 123 - e; M = m >> r; st = (m & ((1u << r) - 1)) != 0; }
+  else { M = 0; st = m != 0; }
+  vv = (i64)base * 0x1000000 + ((b >> 31) ? -(i64)M - (i64)st : (i64)M);   /* floor of the exact sum; the true value is above it by less than 1 if st */
+  if (vv <= 0) return -1;
+  v = (u32)vv;
+  L = 32 - (u32)__builtin_clz(v);
+  if (L > 24) {                                     /* round to 24 bits, to nearest, ties to even, st means "a little above" */
+    r = L - 24; rem = v & ((1u << r) - 1); half = 1u << (r - 1);
+    v >>= r;
+    if (rem > half || (rem == half && (st || (v & 1)))) v++;
+    v <<= r;
+  }
+  *n = (i32)(v >> 24);
   return 0;
 }
 
-/* The live view's exposure: v24 = 32 n(Av), e30 = 32 (n(Av) + n(Tv) - n(Sv)); 0 on success, -1 when the record is not usable. */
+static int lv_pbuf_ok(u32 p) {                      /* the buffer [p, p + 0x1090) lies in one of the two RAM ranges */
+  return (p >= AWBML_RAM_LO && p <= AWBML_RAM_HI - 0x1090u) || (p >= AWBML_RAM2_LO && p <= AWBML_RAM2_HI - 0x1090u);
+}
+
+/* The live view's exposure from the property store: v24 = 32 na, e30 = 32 (na + nt - ns); 0 on success, -1 when it is not usable
+ * (then the exposure is treated as missing, the behaviour without this source). */
 static int lv_exposure(const unsigned char *S, i32 *v24, i32 *e30) {
-  u32 s0 = rd32(S), p = s0 - 0x4D2C0u, wa, wt, ws;
+  u32 E, X, a, b, w[3], w2[3], a2, b2, k, t;
   i32 na, nt, ns, e;
-  if ((s0 & 3) || p < AWBML_RAM_LO || p >= AWBML_RAM_HI || p + 0x38D2Cu > AWBML_RAM_HI) return -1;
-  wa = REC32(p + 0x38D20u); wt = REC32(p + 0x38D24u); ws = REC32(p + 0x38D28u);
-  if (!(wa | wt | ws)) return -1;
-  if (float8(wa, &na) || float8(wt, &nt) || float8(ws, &ns)) return -1;
+  if (rd32(S + 0x70) == 4) return -1;               /* S+0x70 is 4 when P[0x719EF] == 1 (the movie / full grid case), else 2 */
+  if (!(REC32(AWBML_GUARD_ADDR) & 1)) return -1;    /* the singleton exists */
+  E = REC32(AWBML_ESLOT_ADDR);
+  if (!E || (E & 3) || E < AWBML_RAM_LO || E >= AWBML_RAM_HI - 0x520u) return -1;
+  if (REC32(E) != AWBML_VTABLE) return -1;
+  X = REC32(E + 0x518u);
+  if (!X || (X & 3) || X < AWBML_RAM_LO || X >= AWBML_RAM_HI - 0x10u) return -1;
+  for (t = 0; t < 2; t++) {                         /* two identical reads of the pointers and the three words (the commit swaps and copies under a lock we do not take) */
+    a = REC32(X); b = REC32(X + 4);
+    if (!a || !b || (a & 3) || (b & 3) || (a - b != 0x1090u && b - a != 0x1090u) || !lv_pbuf_ok(a) || !lv_pbuf_ok(b)) return -1;
+    for (k = 0; k < 3; k++) w[k] = REC32(a + 0x4D8u + 4 * k);
+    a2 = REC32(X); b2 = REC32(X + 4);
+    for (k = 0; k < 3; k++) w2[k] = REC32(a + 0x4D8u + 4 * k);
+    if (a2 == a && b2 == b && w2[0] == w[0] && w2[1] == w[1] && w2[2] == w[2]) break;
+  }
+  if (t == 2) return -1;
+  if (!(w[0] | w[1] | w[2])) return -1;
+  if (fl8(w[1], 68, &na) || fl8(w[0], 68, &nt) || fl8(w[2], -8, &ns)) return -1;
+  na -= 68; nt -= 68; ns += 8;
   if (na < 8 || na > 80 || nt < -40 || nt > 120 || ns < 24 || ns > 120) return -1;
   e = 32 * (na + nt - ns);
   if (e < -1800 || e > 3100) return -1;
@@ -619,7 +665,6 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
   }
   stride = rd16(S + 0x14); x0 = rd16(S + 0x1c); y0 = rd16(S + 0x1e); w = rd16(S + 0x20); h = rd16(S + 0x22);
   v24 = (i32)rd32(S + 0x24); e30 = (i32)rd32(S + 0x30);
-  if (!is_still && ctx->lv_exp && !(ctx->lv_exp == 2 && !lv_exposure(S, &v24, &e30))) v24 = -0x880;   /* live view: the record's exposure, else none */
   if (w < 1 || w > 64 || h < 1 || h > 64) return;
   if ((u64)(y0 + h - 1) * stride + x0 + w > (1u << 24)) return;
   if (!*ctx->slot) { *ctx->slot = ctx->alloc(2 * AWBML_SCRATCH_BYTES); fresh = 1; }
@@ -638,6 +683,7 @@ void awbml(const struct awbml_ctx *ctx, unsigned char *obj, const unsigned char 
     }
   }
   FUZZ(sc, 0);
+  if (!is_still && ctx->lv_exp && !(ctx->lv_exp == 2 && !lv_exposure(S, &v24, &e30))) v24 = -0x880;   /* live view: the property store's exposure, else none */
   st.r = S_PTR(rd32(S + 0)); st.gr = S_PTR(rd32(S + 4)); st.gb = S_PTR(rd32(S + 8));
   st.b = S_PTR(rd32(S + 12)); st.c = S_PTR(rd32(S + 16));
   st.stride = stride; st.x0 = x0; st.y0 = y0;

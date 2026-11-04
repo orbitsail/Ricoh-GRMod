@@ -9,6 +9,22 @@
 #include "awbml.c"
 
 const unsigned char *awbml_host_base;
+static unsigned g_memlen, g_nread, g_ntear, g_tear_at[4], g_tear_addr[4], g_tear_val[4];
+
+/* The property store reads of awbml.c go through here: reads are counted per host_run, and a test can schedule up to four writes into the test memory
+ * just before the n-th read (0-based), to model the camera changing a word between two reads. An address outside the test memory reads 0. */
+void host_set_tears(unsigned n, const unsigned *at, const unsigned *addr, const unsigned *val) {
+  g_ntear = n > 4 ? 4 : n;
+  for (unsigned i = 0; i < g_ntear; i++) { g_tear_at[i] = at[i]; g_tear_addr[i] = addr[i]; g_tear_val[i] = val[i]; }
+}
+u32 awbml_host_rd32(u32 a) {
+  u32 v = 0;
+  for (unsigned i = 0; i < g_ntear; i++)
+    if (g_tear_at[i] == g_nread && (u64)g_tear_addr[i] + 4 <= g_memlen) memcpy((unsigned char *)awbml_host_base + g_tear_addr[i], &g_tear_val[i], 4);
+  g_nread++;
+  if ((u64)a + 4 <= g_memlen) memcpy(&v, awbml_host_base + a, 4);
+  return v;
+}
 
 static void *g_slot;
 static int g_fail_alloc, g_allocs;
@@ -39,7 +55,7 @@ int host_run(const unsigned char *mem, unsigned memlen, unsigned s_off, const un
   c.recip = (const u32 *)(bl + offs[9]); c.cal = (const i32 *)(bl + offs[10]);
   c.kf = (const u32 *)(bl + offs[11]); c.ln = (const u32 *)(bl + offs[12]);
   c.period = period; c.af89 = af89; c.lv_exp = lv_exp; c.lv_scale = lv_scale;
-  awbml_host_base = m;
+  awbml_host_base = m; g_memlen = memlen; g_nread = 0;
   awbml(&c, obj, m + s_off, is_still);
   memcpy(objout, obj, OBJ_SIZE);
   free(m); free(obj); free(bl);

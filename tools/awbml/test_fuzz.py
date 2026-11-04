@@ -48,7 +48,7 @@ def main():
                     arrs, p = T.gen_random(rng)
                 p['mode'] = int(rng.choice([0] * 12 + [1]))
                 mem, s_off, obj, _ = T.pack_case(*arrs, p['x0'], p['y0'], p['w'], p['h'], p['stride'], p['v24'], p['e30'], p['mode'], rng,
-                                                      rec=(int(rng.choice([T.HOST_LO, 0x30000, 0x8000, T.HOST_HI - 0x38D2C])), T.rec_words(rng)[1]) if rng.random() < 0.5 else None)
+                                                      rec=T.lv_store(rng)[1] if rng.random() < 0.6 else None)
                 still = int(rng.random() < 0.3)
                 out_ = ctypes.create_string_buffer(T.OBJ_SIZE)
                 args = (mem, len(mem), s_off, obj, out_, blob, len(blob), r.offs, 0, int(first), int(rng.choice([1, 4])))

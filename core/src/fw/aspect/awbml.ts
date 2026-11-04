@@ -71,9 +71,12 @@ export const AWBML_AF89 = 1;
 
 /**
  * ctx word, live view only (stills always use S): where the exposure comes from.
- * 0 = use S as it is; 1 = treat the exposure as missing (the camera's no-exposure marker); 2 = read the scene brightness from the live view record,
- * three IEEE floats in APEX half-stop units at S[0] - 0x4D2C0 + 0x38D20 (Av), +0x38D24 (Tv), +0x38D28 (Sv), so the preview's gains see the same
- * brightness the photo gets. Anything unusable (S[0] misaligned or outside RAM, NaN, infinity, all zero, values out of range) falls back to 1.
+ * 0 = use S as it is; 1 = treat the exposure as missing (the camera's no-exposure marker); 2 = read the AE's current decided Tv / Av / Sv (IEEE floats, APEX)
+ * from the property store: ComPropIf singleton E = [0x55379610] (guard word 0x55379608 bit 0, vtable 0x53F8EDE8), X = [E + 0x518], D = X[0], Tv = D+0x4D8,
+ * Av = D+0x4DC, Sv = D+0x4E0 (the values a still copies into rec+0xB9C / 0xB98 / 0xBA0), quantised bit-exactly as the still builder (0x53933D84) does:
+ * na = (int)(68 + 8 Av) - 68, nt = (int)(68 + 8 Tv) - 68, ns = (int)(8 Sv - 8) + 8, S+0x24 = 32 na, S+0x30 = 32 (na + nt - ns). The pointer chain is validated
+ * and the pair of reads repeated (the property commit swaps and copies the buffers); any failure, a movie live view (S+0x70 == 4) or a value out of range
+ * falls back to 1, i.e. the behaviour without this source.
  */
 export const AWBML_LV_EXP = 2;
 

@@ -453,28 +453,73 @@ def observe(T, R, Gr, Gb, B, cnt, x0, y0, w, h, stride, v24, e30, mode):
     return u, v, o[2], o[3]
 
 
-def float8(b):
-    """trunc(8 x) of the float with bits b, or None for a NaN, an infinity or |x| >= 2^14 (as the C code, integer only)."""
-    e, m = (b >> 23) & 255, (b & 0x7FFFFF) | 0x800000
-    if e == 255 or e > 127 + 13:
-        return None
-    v = 0 if e == 0 else (m << (e - 147) if e >= 147 else (0 if 147 - e >= 32 else m >> (147 - e)))
-    return -v if b >> 31 else v
+FW_CFG = dict(guard=0x55379608, eslot=0x55379610, lo=0x55000000, hi=0x80000000, lo2=0x40000000, hi2=0x53000000)
+VTABLE = 0x53F8EDE8
 
 
-def lv_exposure(s0, rd32, lo=0x55000000, hi=0x60000000):
-    """The live view's exposure from the record at S[0] - 0x4D2C0 (floats Av, Tv, Sv at +0x38D20 / 24 / 28 in APEX half stops):
-    (v24, e30), or None when the record is not usable (the exposure is then treated as missing). rd32(addr) reads a word."""
-    p = (s0 - 0x4D2C0) & 0xFFFFFFFF
-    if s0 & 3 or p < lo or p >= hi or p + 0x38D2C > hi:
+def fl8(b, base):
+    """trunc(fl32(base + 8 x)) for the float bits b as the camera's vmla / vnmls + vcvt.s32.f32 (see awbml.c fl8), or None (NaN, inf, |x| >= 16, sum <= 0)."""
+    e, m = (b >> 23) & 255, b & 0x7FFFFF
+    if e == 255 or e > 130:
         return None
-    w = [rd32(p + 0x38D20), rd32(p + 0x38D24), rd32(p + 0x38D28)]
+    if e:
+        m |= 0x800000
+    else:
+        e = 1
+    st = 0
+    if e >= 123:
+        M = m << (e - 123)
+    elif e > 100:
+        r_ = 123 - e
+        M, st = m >> r_, int(m & ((1 << r_) - 1) != 0)
+    else:
+        M, st = 0, int(m != 0)
+    vv = base * 0x1000000 + (-M - st if b >> 31 else M)
+    if vv <= 0:
+        return None
+    v = vv
+    L = v.bit_length()
+    if L > 24:
+        r_ = L - 24
+        rem, half = v & ((1 << r_) - 1), 1 << (r_ - 1)
+        v >>= r_
+        if rem > half or (rem == half and (st or v & 1)):
+            v += 1
+        v <<= r_
+    return v >> 24
+
+
+def lv_exposure(rd32, s70=2, cfg=None):
+    """The live view's exposure from the property store as awbml.c lv_exposure reads it (same order of reads; rd32(addr) is the memory):
+    (v24, e30), or None when it is not usable (the exposure is then treated as missing)."""
+    c = cfg or FW_CFG
+    lo, hi, lo2, hi2 = c['lo'], c['hi'], c['lo2'], c['hi2']
+    if s70 == 4 or not rd32(c['guard']) & 1:
+        return None
+    E = rd32(c['eslot'])
+    if not E or E & 3 or E < lo or E >= hi - 0x520 or rd32(E) != VTABLE:
+        return None
+    X = rd32(E + 0x518)
+    if not X or X & 3 or X < lo or X >= hi - 0x10:
+        return None
+    ok = lambda p: lo <= p <= hi - 0x1090 or lo2 <= p <= hi2 - 0x1090
+    for t in range(2):
+        a, b = rd32(X), rd32(X + 4)
+        if not a or not b or a & 3 or b & 3 or (a - b) & 0xFFFFFFFF != 0x1090 and (b - a) & 0xFFFFFFFF != 0x1090 or not ok(a) or not ok(b):
+            return None
+        w = [rd32(a + 0x4D8 + 4 * k) for k in range(3)]
+        a2, b2 = rd32(X), rd32(X + 4)
+        w2 = [rd32(a + 0x4D8 + 4 * k) for k in range(3)]
+        if (a2, b2, w2) == (a, b, w):
+            break
+    else:
+        return None
     if not any(w):
         return None
-    n = [float8(x) for x in w]
-    if None in n:
+    na, nt, ns = fl8(w[1], 68), fl8(w[0], 68), fl8(w[2], -8)
+    if None in (na, nt, ns):
         return None
-    na, nt, ns = n
+    na, nt, ns = na - 68, nt - 68, ns + 8
     if not (8 <= na <= 80 and -40 <= nt <= 120 and 24 <= ns <= 120):
         return None
     e = 32 * (na + nt - ns)

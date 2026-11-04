@@ -36,7 +36,19 @@ MY = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(MY)
 
 ALLOC, SLOT, CANARY_FAIL, CANARY_CMP = 0x538E09B0, 0x558372DC, 0x53938E50, 0x53938E38
 STILL = 0x60700000
-REC_P = 0x55A00000
+# the fake property store: guard 0x55379608, slot 0x55379610 -> E (vtable at E, X at E + 0x518), X = {a, b}, the buffers (Tv, Av, Sv at a + 0x4D8 / 4DC / 4E0)
+GUARD, ESLOT, FE, FX, FA = 0x55379608, 0x55379610, 0x55A10000, 0x55A20000, 0x55A30000
+VTAB = 0x53F8EDE8
+
+
+def store_of(words, **kw):
+    """{addr: u32} of a valid fake property store holding the Tv, Av, Sv words; kw overrides: guard, vt, E, X, a, b."""
+    E, X, a = kw.get('E', FE), kw.get('X', FX), kw.get('a', FA)
+    b = kw.get('b', a + 0x1090)
+    w = {GUARD: kw.get('guard', 1), ESLOT: E, E: kw.get('vt', VTAB), E + 0x518: X, X: a, X + 4: b}
+    for i, x in enumerate(words):
+        w[a + 0x4D8 + 4 * i] = x
+    return w
 
 
 def _ctx_addr(path):
@@ -85,17 +97,15 @@ class Fw:
             if a >= CTX7 and sp < self.sp_min_mod: self.sp_min_mod = sp
         return mu.hook_add(UC_HOOK_CODE, on)
 
-    def run(self, S, mode, count_insns=False, r2=0, stack=False, rec=None):
+    def run(self, S, mode, count_insns=False, r2=0, stack=False, store=None):
         e = self.e
-        saved_blocks = H.BLOCKS
-        if rec is not None:                  # a fake live view record P = 0x55A00000 with S[0] = P + 0x4D2C0 and the three float words
-            H.BLOCKS = REC_P + 0x4D2C0
         S = dict(S); S['s34'] = mode
         nblk = 64 * 64
         S['flags'] = [0] * nblk
         H.setup_S(e, S, nblk)
-        H.BLOCKS = saved_blocks
-        if rec is not None: e.wb(REC_P + 0x38D20, struct.pack('<3I', *rec))
+        if store is not None:
+            for ad, v in store.items():
+                if 0x55000000 <= ad < 0x56000000 - 4: e.w32(ad, v)
         e.wb(e.r32(A_OBJ + 0xAF8C), bytes(nblk + 4))
         for i, l in enumerate(LIMS): e.w16(A_OBJ + 0x6A68 + 2 * i, l)
         regs = [0xA0A0A000 + i for i in range(8)]
@@ -276,74 +286,106 @@ def main():
     r = np.array(ratios)
     print(f'2b. S+0x68/0x6E (unity / x1.563,x3.019 / other): {nsc} calls, mismatches vs ref {sbad2}; still at unity bit-identical to v8c {nunity}; live view checks {nlive_same}; '
           f'still output divided by (unity output x word / 0x2000): R {r[:, 0].min():.4f}..{r[:, 0].max():.4f}, B {r[:, 1].min():.4f}..{r[:, 1].max():.4f}')
-    # ---- 5. live view exposure mode 2 (the build's default): the exposure floats of a fake live view record at S[0] - 0x4D2C0.
-    #  (a) a live call with a valid triple == a still call (at S+0x68/6E unity, so unscaled) with the same stats and v24 / e30 from the triple, == ref;
-    #  (b) a live call with a rejected record, or S[0] outside RAM, == the 8.1 firmware's live call (mode 1); (c) stills with a record == 8.1's stills.
-    import struct as _st
+    # ---- 5. live view exposure mode 2 (the build's default): the AE's current Tv / Av / Sv from the property store (a fake store in the emulated RAM).
+    #  (a) parity with the stock still builder (0x53933D84, run in the emulator on a fake record with P[0xB98 / B9C / BA0] set to the same floats):
+    #      its S+0x24 / S+0x30 == the module's v24 / e30, and the live output == a still call (unity words, unscaled) with that S, == ref;
+    #  (b) every broken link / movie / zero words: live == the 8.1 firmware's live (mode 1) at unity words, and scaled by the words at other values;
+    #  (c) stills with a store == 8.1's stills.
+    import struct as _st, importlib
+    from unicorn import UC_HOOK_CODE as _HC
+    from unicorn.arm_const import UC_ARM_REG_R0 as _R0, UC_ARM_REG_R1 as _R1, UC_ARM_REG_SP as _SP, UC_ARM_REG_LR as _LR, UC_ARM_REG_PC as _PC
     V81 = _os.environ.get('V81_RTOS', f'{SPD}/cpulut/final2/RTOS.bin')
     fb = lambda x: _st.unpack('<I', _st.pack('<f', x))[0]
-    valid = [(4.0, 7.0, 7.5), (2.0, 9.0, 4.0), (6.5, 5.0, 9.0), (3.0, 0.5, 5.0), (8.0, 3.0, 12.5), (5.0, 7.25, 8.0)]
-    rejects = [(0, 0, 0), (0x7FC00000, fb(7.0), fb(7.5)), (fb(4.0), 0x7F800000, fb(7.5)), (fb(4.0), fb(7.0), 0xFF800000),
-               (fb(-4.0), fb(7.0), fb(7.5)), (fb(4.0), fb(7.0), fb(-7.5)), (fb(0.5), fb(7.0), fb(7.5)), (fb(11.0), fb(7.0), fb(7.5)), (fb(4.0), fb(-6.0), fb(7.5)),
-               (fb(4.0), fb(16.0), fb(7.5)), (fb(4.0), fb(7.0), fb(2.0)), (fb(4.0), fb(7.0), fb(16.0)), (fb(10.0), fb(15.0), fb(3.0)), (fb(1.0), fb(-5.0), fb(15.0)),
-               (fb(1e9), fb(7.0), fb(7.5)), (0x80000000, fb(7.0), fb(7.5))]
-    n5 = bad5 = nfb = nst5 = 0
-    f8 = lambda x: ref.float8(fb(x))
+    eb = Fw(V81).e                                              # an emulator with the stock still builder
+    eb.mu.hook_add(_HC, lambda uc, a_, s_, u_: uc.reg_write(_PC, uc.reg_read(_LR)), begin=0x538f75fc, end=0x538f75fc + 4)
+    PREC, THIS, SBP = 0x60800000, 0x60900000, 0x60A00000
+    def stock_s(tv, av, sv):
+        eb.wb(PREC, bytes(0x1000)); eb.wb(THIS, bytes(0x100)); eb.wb(SBP, bytes(0x100))
+        eb.w32(THIS + 0x40, SBP); eb.w32(PREC + 0xB98, av); eb.w32(PREC + 0xB9C, tv); eb.w32(PREC + 0xBA0, sv)
+        eb.mu.reg_write(_R0, THIS); eb.mu.reg_write(_R1, PREC); eb.mu.reg_write(_SP, 0x7e100000); eb.mu.reg_write(_LR, 0x7e000000)
+        eb.mu.emu_start(0x53933D84, 0x53933F68, count=200000)
+        return _st.unpack('<i', eb.rb(SBP + 0x24, 4))[0], _st.unpack('<i', eb.rb(SBP + 0x30, 4))[0]
+    rr = random.Random(5)
+    trip = [(4.0, 7.0, 7.5), (2.0, 9.0, 4.0), (6.5, 5.0, 9.0), (3.0, 0.5, 5.0), (8.0, 3.0, 12.5), (5.0, 7.25, 8.0), (1.0, -5.0, 3.0), (10.125, 15.125, 15.125)]
+    for _ in range(40 if quick else 220):
+        k = rr.random()
+        av, sv = rr.uniform(0.5, 10.5), rr.uniform(2.5, 15.5)
+        tv = max(-5.5, min(15.5, sv - av + rr.uniform(-3, 3)))
+        if k < 0.35: av, tv, sv = (round(x * 8) / 8 for x in (av, tv, sv))
+        w = [fb(tv), fb(av), fb(sv)]
+        if k > 0.6: w = [(x + rr.choice([-3, -2, -1, 0, 1, 2, 3])) & 0xFFFFFFFF for x in w]
+        trip.append(tuple(_st.unpack('<f', _st.pack('<I', x))[0] for x in w))
+    n5 = bad5 = nacc = nst5 = nstock = 0
     for si in list(range(3, len(SS), 23 if quick else 11))[:12 if quick else 30]:
         n, S0 = SS[si]
         if n.startswith('sparse'): continue
-        S0 = dict(S0, g68=0x2000, g6e=0x2000)       # unity words: live equals 8.1's unscaled live
-        for av, tv, sv in valid:
-            na, nt, ns = f8(av), f8(tv), f8(sv)
-            e = 32 * (na + nt - ns)
-            if not -1800 <= e <= 3100: continue
-            S = dict(S0); S['g68'] = S['g6e'] = 0x2000
-            gl, _ = Fw(V7).run(S, 0, r2=0, rec=(fb(av), fb(tv), fb(sv)))
-            Ss = dict(S, v24=32 * na, e30=e)
-            gs, _ = Fw(V7).run(Ss, 0, r2=STILL)
-            a5 = ref_args(Ss); want = ref.awbml_ref(TAB, *a5, 0)
-            n5 += 1
-            if want is not None and (gl[0], gl[3]) != want: bad5 += 1; bad.append(('live with record != ref', n, (av, tv, sv), gl, want))
-            if gl != gs: bad5 += 1; bad.append(('live with record != still with the same exposure', n, (av, tv, sv), gl, gs))
-            if want is None: nfb += 1
-            gc.collect()
+        S0 = dict(S0, g68=0x2000, g6e=0x2000, mode70=2)
         g81_l, _ = Fw(V81).run(S0, 0, r2=0)
-        g81_s, _ = Fw(V81).run(S0, 0, r2=STILL)
-        for words in rejects:
-            gl, _ = Fw(V7).run(S0, 0, r2=0, rec=words)
+        for tv, av, sv in trip[:8] + trip[8 + (si % 5)::5]:
+            words = [fb(tv), fb(av), fb(sv)]
+            s24, s30 = stock_s(*words); nstock += 1
+            q = [ref.fl8(words[1], 68), ref.fl8(words[0], 68), ref.fl8(words[2], -8)]
+            if None not in q:
+                na, nt, ns = q[0] - 68, q[1] - 68, q[2] + 8
+                if (32 * na, 32 * (na + nt - ns)) != (s24, s30): bad5 += 1; bad.append(('module quantiser != stock still builder', words, (32 * na, 32 * (na + nt - ns)), (s24, s30)))
+            stw = store_of(words)
+            exp = ref.lv_exposure(lambda ad: stw.get(ad, 0), 2, ref.FW_CFG)
+            gl, _ = Fw(V7).run(S0, 0, r2=0, store=stw)
             n5 += 1
-            if gl != g81_l: bad5 += 1; bad.append(('rejected record: live != 8.1', n, words, gl, g81_l))
-        gl, _ = Fw(V7).run(S0, 0, r2=0)                           # S[0] outside RAM (the emulator's default test layout)
+            if exp is not None:
+                nacc += 1
+                if exp != (s24, s30): bad5 += 1; bad.append(('module exposure != stock', words, exp, (s24, s30)))
+                Ss = dict(S0, v24=s24, e30=s30)
+                gs, _ = Fw(V7).run(Ss, 0, r2=STILL)
+                want = ref.awbml_ref(TAB, *ref_args(Ss), 0)
+                if want is not None and (gl[0], gl[3]) != want: bad5 += 1; bad.append(('live with store != ref', n, words, gl, want))
+                if gl != gs: bad5 += 1; bad.append(('live with store != still with the stock S', n, words, gl, gs))
+            elif gl != g81_l: bad5 += 1; bad.append(('rejected exposure: live != 8.1', n, words, gl, g81_l))
+            gc.collect()
+        ok = [fb(4.0), fb(7.0), fb(7.5)]
+        broken = [dict(guard=0), dict(guard=2), dict(vt=VTAB + 4), dict(E=FE + 2), dict(E=0x55000000 - 4), dict(E=0x80000000), dict(X=FX + 1), dict(X=0), dict(a=FA + 2), dict(a=0),
+                  dict(b=FA + 0x1094), dict(b=FA), dict(b=0), dict(a=0x55000000 - 4, b=0x55000000 - 4 + 0x1090), dict(a=0x80000000 - 0x1090 + 4, b=0x80000000 + 4), dict(a=0x53000000 - 0x1090 + 4, b=0x53000000 + 4),
+                  dict(a=0x54000000, b=0x54000000 + 0x1090)]
+        stores = [store_of(ok, **kw) for kw in broken] + [store_of([0, 0, 0]), store_of([0x7FC00000, fb(5.0), fb(8.0)]), store_of([fb(5.0), 0x7F800000, fb(8.0)])]
+        for st_ in stores:
+            gl, _ = Fw(V7).run(S0, 0, r2=0, store=st_)
+            n5 += 1
+            if gl != g81_l: bad5 += 1; bad.append(('broken store: live != 8.1', n, gl, g81_l))
+        gl, _ = Fw(V7).run(dict(S0, mode70=4), 0, r2=0, store=store_of(ok))             # movie
+        g81m, _ = Fw(V81).run(dict(S0, mode70=4), 0, r2=0)
         n5 += 1
-        if gl != g81_l: bad5 += 1; bad.append(('S[0] out of RAM: live != 8.1', n, gl, g81_l))
-        for words in (valid[0], rejects[1]):
-            ws = tuple(fb(x) if isinstance(x, float) else x for x in words)
-            gs, _ = Fw(V7).run(S0, 0, r2=STILL, rec=ws)
+        if gl != g81m: bad5 += 1; bad.append(('movie: live != 8.1', n, gl, g81m))
+        S1 = dict(S0, g68=0x2800 + 7 * si, g6e=0x1900 + 11 * si)                          # fallback live view is 8.1's scaled by the words
+        gl, _ = Fw(V7).run(S1, 0, r2=0)
+        want = (ref.scale_gain(g81_l[0], S1['g68']), ref.scale_gain(g81_l[3], S1['g6e']))
+        n5 += 1
+        if (gl[0], gl[3]) != want or gl[1:3] != g81_l[1:3]: bad5 += 1; bad.append(('fallback live != 8.1 scaled', n, gl, g81_l, want))
+        g81_s, _ = Fw(V81).run(S0, 0, r2=STILL)
+        for words in (ok, [0x7FC00000, 1, 2]):
+            gs, _ = Fw(V7).run(S0, 0, r2=STILL, store=store_of(words))
             nst5 += 1
-            if gs != g81_s: bad5 += 1; bad.append(('still with a record != 8.1', n, gs, g81_s))
+            if gs != g81_s: bad5 += 1; bad.append(('still with a store != 8.1', n, gs, g81_s))
         for mode in (1, 2):                                       # the other modes are untouched
-            gl, _ = Fw(V7).run(S0, mode, r2=0, rec=(fb(4.0), fb(7.0), fb(7.5)))
+            gl, _ = Fw(V7).run(S0, mode, r2=0, store=store_of(ok))
             g8, _ = Fw(V81).run(S0, mode, r2=0)
             if gl != g8: bad5 += 1; bad.append(('mode != 0 differs from 8.1', n, mode))
         gc.collect()
-    print(f'5. live view exposure from the record: {n5} live calls ({nfb} valid ones with a fallback result), {nst5} stills; mismatches {bad5} '
-          f'(valid triple == still with the equivalent e30 == ref; rejected / out of RAM == 8.1 live; stills and modes 1, 2 == 8.1)')
-    # ---- 6. live view scaling by S+0x68/6E (ctx lv_scale): with the words at 0x2000 this firmware equals the previous one (final3) on every live and still call
-    #  (computing and cached, with and without a record, stills interleaved); with other words live equals the scaled reference (2b above, and the sequences of 2).
-    V3 = _os.environ.get('FINAL3_RTOS', f'{SPD}/cpulut/final3/RTOS.bin')
+    print(f'5. live view exposure from the property store: {n5} live calls ({nstock} stock still builder runs, {nacc} accepted exposures), {nst5} stills; mismatches {bad5}')
+    # ---- 6. final5 vs the previous firmware (final4) where the exposure source is unusable (no store): identical live and still outputs with S+0x68/6E = 0x2000, computing / cached / interleaved
+    V3 = _os.environ.get('FINAL3_RTOS', f'{SPD}/cpulut/final4/RTOS.bin')
     n6 = bad6 = 0
     for si in list(range(1, len(SS), 17 if quick else 7))[:8 if quick else 30]:
         n, S0 = SS[si]
         if n.startswith('sparse'): continue
         S = dict(S0, g68=0x2000, g6e=0x2000)
         old, new = Fw(V3), Fw(V7)
-        for step, (r2, rc, mode) in enumerate([(0, None, 0), (0, None, 0), (STILL, None, 0), (0, None, 0), (0, None, 0), (0, (fb(4.0), fb(7.0), fb(7.5)), 0), (0, None, 0), (STILL, (fb(4.0), fb(7.0), fb(7.5)), 0), (0, None, 1), (0, None, 0)]):
-            go, no = old.run(S, mode, r2=r2, rec=rc); gn, nn = new.run(S, mode, r2=r2, rec=rc)
+        for step, (r2, mode) in enumerate([(0, 0), (0, 0), (STILL, 0), (0, 0), (0, 0), (0, 0), (0, 0), (STILL, 0), (0, 1), (0, 0)]):
+            go, no = old.run(S, mode, r2=r2); gn, nn = new.run(S, mode, r2=r2)
             n6 += 1
-            if (go, no) != (gn, nn): bad6 += 1; bad.append(('final4 != final3 at unity words', n, step, go, gn))
+            if (go, no) != (gn, nn): bad6 += 1; bad.append(('final5 != previous at unity words without a store', n, step, go, gn))
         del old, new
         gc.collect()
-    print(f'6. live view scaling (final4 vs final3 with S+0x68/6E = 0x2000, live computing / cached / record / interleaved stills / mode 1): {n6} calls, mismatches {bad6}')
+    print(f'6. final5 vs the previous firmware, no usable store, S+0x68/6E = 0x2000 (live computing / cached / interleaved stills / mode 1): {n6} calls, mismatches {bad6}')
     # ---- 3. instruction counts (unicorn) on a few scenes: the camera's own Auto estimate, ours computing / cached / leaving
     pick = [SS[i % len(SS)] for i in (0, 10, 36, 80, 140, 200, len(SS) - 30, len(SS) - 5)]
     for n, S in pick:
