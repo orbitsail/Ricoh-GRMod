@@ -25,6 +25,8 @@ Small scripts that produced the [E] results in `docs/griv-re/`. Read `docs/griv-
 | `mode2_emu.py` | the Y-block builder 0x538F75FC (mode 2) in unicorn |
 | `tiff.py`, `mn.py`, `dngload.py`, `parse.py`, `dngwb.py` | DNG/TIFF reader, makernote loader with the tag-name table, `load405`, a per-file dump that saves the AWB statistics (`parse.py file.dng [out.npz]`), a tag listing for many files (`dngwb.py 'dir/*.dng'`); layouts in `docs/griv-re/dng-tags.md` |
 | `rh2.py` | the independent reviewer's unicorn harness (bump `operator new` that can fail, stack poison, AAPCS sentinels, sp balance) |
+| `ae/` | the AE accuracy study (ae-accuracy.md): DNG and FiveK tables, the comparison with the five experts, checks. Reads `$GRIV_DATA/ae`; see `ae/README.md` |
+| `fwread/` | static-reading helpers of the AE / exposure-program study (exposure.md): annotated disassembler, getter / setter pair map, UTF-16 string and pointer search; see `fwread/README.md` |
 
 ## Left out of this directory (and why)
 

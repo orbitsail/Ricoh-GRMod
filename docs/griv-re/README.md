@@ -6,7 +6,7 @@
 内容：自动白平衡（AWB）的原厂流程和我们的学习型挂钩、实时取景（LV）曝光的真实来源、阴影/高光校正的核心和我们的树模型挂钩、
 DNG 厂商注释里可用来做测试数据的标签、CPU 套 LUT 实验、模拟器测试怎么跑，以及 7.x 到 8.2 的版本史。
 另有一篇（ae-accuracy.md）是对原厂自动测光（AE）的实测：它把画面平均亮度稳在什么位置、和 5 位修图师的偏好差多少、高光余量、弱项在哪，以及为什么没有去替换它。
-每条结论都标了证据等级：[E] 在模拟器里逐位验证过，[C] 只读了代码，[I] 推断。
+每条结论都标了证据等级：[R] 在相机上实测过，[E] 在模拟器里逐位验证过，[C] 只读了代码，[I] 推断，[?] 未知。
 最重要的教训：模拟器里被桩掉（stub）的东西都是盲区，8.0 的绿色照片就是这么来的（拍照时 S+0x68/0x6E 增益字不是 0x2000，
 而是每台机器自己的系数，约 1.56 / 3.02）；发布前一定要拿真实 DNG 对一遍。
 动固件之前先读这个目录。注意：训练得到的模型参数（ffcc_cube_meta.npz）和测试用的场景数据不在仓库里，见 `testing.md` 的"外部输入"。
@@ -35,7 +35,7 @@ DNG 厂商注释里可用来做测试数据的标签、CPU 套 LUT 实验、模�
   (heap, zero-filled globals) has no image.
 - **The mod builds keep the official addresses**: only the hook words and the appended area differ from the official RTOS, so every
   address in these notes is valid for the official image and for our builds (the appended area starts at the end of the official image, 0x543D2AC0).
-- **Tags** (keep them when you edit these files): `[E]` emulated: the real firmware function was run in unicorn and agrees bit-exactly with a
+- **Tags** (keep them when you edit these files): `[R]` verified on a camera (a photo, a log or a setting change on the real GR IV; say which); `[E]` emulated: the real firmware function was run in unicorn and agrees bit-exactly with a
   model or with the stated behaviour; `[C]` read from the code only; `[I]` inferred or interpreted (not shown by code or emulation);
   `[?]` unknown. An untagged statement is a definition or a plain fact of this repository.
 - **Source of a claim**: written in parentheses when it matters, for example (awb_spec §4), (awbmgr Follow-up 4), (lvexp), (review final3).

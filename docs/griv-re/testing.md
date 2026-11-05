@@ -54,6 +54,8 @@ private_pack/
     studio/*.npz                    studio shots
     fivek_gr/*.npz                  FiveK converted (780 files, 12 MB; test_fw samples every 40th)
     dng/*.dng                       optional: public DPReview GR IV DNGs; shadowml/test_host.py adds real-photo scenes when present
+    ae/                             AE accuracy study (tools/re/ae, ae-accuracy.md): fivek/*.npz (1005 FiveK raws: statistics and the five
+                                    expert renditions, 452 MB), gr/*.npz (43 GR IV DNGs, 80 MB), ae_private.json (frame lists; user file names)
   baselines/       GRIV_BASELINES   <name>/RTOS.bin, the decoded RTOS section of earlier builds
     v6 v7 v7b v8c final2 final4 final5 final5_ns shadow_pre shadow_base
     shadow_pre   = scratchpad cpulut/fw14/pre: stock + the current shadowLearn module (per-path scratch, trained model), the PRE of
