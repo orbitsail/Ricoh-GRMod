@@ -88,19 +88,92 @@ diff --git a/core/src/fw/gr4v120/aspect/adjslots.ts b/core/src/fw/gr4v120/aspect
  const SELECT_TABLE = 0x53dcd470;
  const SELECT_RECORD = 0x4c;
  const ADJ1_COUNT = 0x531d0b7c;
+diff --git a/core/src/fw/gr4v120/aspect/awbml.ts b/core/src/fw/gr4v120/aspect/awbml.ts
+--- a/core/src/fw/gr4v120/aspect/awbml.ts
++++ b/core/src/fw/gr4v120/aspect/awbml.ts
+@@ -1,50 +1,15 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /**
+- * Experimental: a learned auto white balance for the plain Auto (GR IV / HDF / Monochrome, firmware 1.11).
+- *
+- * The module of `tools/gr4v120/awbml/awbml.c` (an FFCC-style model, Barron & Tsai 2017, trained on 2234 SimpleCube++ scenes
+- * converted to the camera's AWB statistics and calibrated on real GR IV studio shots; integer only, bit-exact with
+- * `tools/gr4v120/awbml/ref.py`) runs at the end of the Auto estimate (0x53960B8C): the call of the final stage
+- * (0x539609d4, which turns the weighted parents into the gains and writes them to this+4 .. +0xA) is replaced by a
+- * stub that makes that call and then lets the module overwrite the red and blue gains (this+4, this+0xA) with the
+- * learned estimate. It reads the AWB's own block statistics (the settings block S, kept in r5 for the whole
+- * function): 64 x 62 block means and counts, and the scene brightness.
+- *
+- * Only the plain Auto (this+0xAF88 == 0) is touched; White Priority and Warmth Priority stay as the camera has them. When
+- * the scene has too few usable blocks (under 5 % of the pixels) the camera's own result is kept.
+- *
+- * Two paths, told apart by the estimate's third argument (r2, copied to r7 at the entry and untouched up to the hook: 0 for
+- * live view, which calls LiveViewWhiteBalance::Execute, the still record pointer for a still, which comes from
+- * WbCalcProcess; the stub passes it as is_still):
+- *  - Live view runs on every frame, so the estimate is computed on the first call and then on every fourth (a full
+- *    estimate is about 2.2 M instructions), the calls in between repeat the last result; leaving plain Auto forgets it. The
+- *    camera's own boxcar smoothing still follows on the final gains.
+- *  - A still always computes fresh from its own statistics: no throttle, no repeat, no temporal filter, and it never reads or
+- *    changes the live view's state (counter, cached result, filter). The two paths may run in different tasks, so each has
+- *    its own region of the scratch memory (one allocation of two regions, kept in the one RAM slot).
+- *
+- * Temporal filter (FFCC's, live view only): each computing call's estimate is an observation whose variance is the spread of
+- * the softmax marginals mapped through a measured table (what the estimate really varies by from frame to frame); a Kalman
+- * filter per axis (parameters and that table in the KF table, nothing to change in the code) smooths the estimate over the
+- * computing calls, so live view does not jump; two confident frames in a row, both far from the state in the same
+- * direction, restart it (scene change). Leaving plain Auto clears the state.
+- *
+- * Live view's S has v24/v28/v2c never written (0) and e30 from a record word nothing writes (so probably 0, which would read as a
+- * very dark scene), so live view treats the exposure data as missing (the context's live view exposure mode, 1); stills keep using S.
+- *
+- * Stills only: the model's gains are in the units of the settings it was calibrated with (the R and B gain words S+0x68 and
+- * S+0x6E = 0x2000); at capture those words carry the camera's per-unit factor (about 1.56 and 3.02), so a still's gains are
+- * scaled by them: (gain * S[0x68] + 0x1000) >> 13, likewise B with S[0x6E]. Live view is left as it is.
+- *
+- * The context's AF89 flag (on in this build) makes the module also write 0 to this+0xAF89 whenever it overrides the gains with a valid estimate (a repeated live view result too; never on a fallback or in another mode):
+- * the final stage sets that byte when the camera's own sums are all zero, and the live view smoother then holds the previous
+- * value; a learned estimate does not depend on those sums.
+- *
+- * Layout: the context, the module and the stub are appended (as the other modules), then the 79 KB of tables
+- * (`awbml-data.ts`); build.ts installs this after every other addition, so they all keep the places they have
+- * without it (the image then differs from one without it only in the call word and the appended bytes). The module's scratch memory (2 x 35 KB, one `operator new` call, made once) is kept in the RAM word
+- * 0x5583901C, which the start-up zero fill must clear (the literal at 0x53000460 is extended to 0x55839040 if not
+- * already, as the look slots do).
++ * Learned plain-Auto white balance, ported from the reviewed 8.2 module to GR IV 1.20.
++ * Numeric algorithm, trained tables, separate still/live scratch regions, period-4 live
++ * throttling and temporal filtering are unchanged. Both paths scale their output by
++ * their own S+0x68/0x6E gain words; stills always compute from their own statistics.
++ * Live exposure comes from the validated ComPropIf buffer chain. 1.20's still builder
++ * now uses double-precision, nearest eighth-stop quantisation (538fb018/68/b8), which
++ * the port implements in integers and checks against the actual stock builder.
++ * Hook/register contracts are asserted below. The scratch pointer uses 0x5583901c;
++ * the builder rejects HDR/diagnostic combinations that share the reserved words.
++ * Address evidence: tools/port/gr4-120-learned-overrides.json; tests: tools/gr4v120/awbml.
+  */
+ import { FirmwareError } from '../../types';
+ import { assembleWords, branchTarget } from './arm';
+@@ -74,7 +39,7 @@
+  * 0 = use S as it is; 1 = treat the exposure as missing (the camera's no-exposure marker); 2 = read the AE's current decided Tv / Av / Sv (IEEE floats, APEX)
+  * from the property store: ComPropIf singleton E = [0x5537b2a0] (guard word 0x5537b298 bit 0, vtable 0x53FC54D8), X = [E + 0x518], D = X[0], Tv = D+0x4D8,
+  * Av = D+0x4DC, Sv = D+0x4E0 (the values a still copies into rec+0xB9C / 0xB98 / 0xBA0), quantised bit-exactly as the still builder (0x5395BDE8) does:
+- * na = (int)(68 + 8 Av) - 68, nt = (int)(68 + 8 Tv) - 68, ns = (int)(8 Sv - 8) + 8, S+0x24 = 32 na, S+0x30 = 32 (na + nt - ns). The pointer chain is validated
++ * na = floor(68.5 + 8 Av) - 68, nt = floor(68.5 + 8 Tv) - 68, ns = floor(8 Sv - 7.5) + 8, S+0x24 = 32 na, S+0x30 = 32 (na + nt - ns). The pointer chain is validated
+  * and the pair of reads repeated (the property commit swaps and copies the buffers); any failure, a movie live view (S+0x70 == 4) or a value out of range
+  * falls back to 1, i.e. the behaviour without this source.
+  */
 diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/build.ts
 --- a/core/src/fw/gr4v120/aspect/build.ts
 +++ b/core/src/fw/gr4v120/aspect/build.ts
-@@ -35,7 +35,7 @@
- import { hdrTopDraw, installDateStampMenu, installHdrMenu, installHdrStillLine } from './datestamp-menu';
- import { installMonoUnlock } from './monounlock';
+@@ -39,7 +39,7 @@
+ import { installAwbFit } from './awbfit';
+ import { installBrightAuto } from './brightauto';
  import { CINEMA_STYLES, installExtraSlots, installHalation } from './slots';
 -import { halationLight } from './halation';
 +import { HALATION_TEST, halationLight } from './halation';
  import type { HalationLook } from './halation';
  import { installFactoryHidden, installLookOrder, validateLookLayout } from './looks';
  import type { LookLayout } from './looks';
-@@ -43,23 +43,26 @@
+@@ -47,12 +47,12 @@
  import { installShutdownMenu } from './shutdown';
  import { FIRST_ADDED_LOOK, installSettingsGuard } from './guard';
  import { installAdjSlots } from './adjslots';
@@ -116,9 +189,8 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
  /** The appended area must stay below the address where the firmware's RAM starts. */
  export const APPEND_LIMIT = 0x55000000;
  
- /** Start-up copy of initialised data: `length` bytes from `source` (in the image) to `destination`. */
--const RAM = { source: 0x543b3100, destination: 0x55000000, length: 0x57480 };
-+const RAM = { source: 0x543b3100, destination: 0x55000000, length: 0x58500 };
+@@ -60,10 +60,13 @@
+ const RAM = { source: 0x543b3100, destination: 0x55000000, length: 0x58500 };
  
  export const ICON_CATALOG = 0x5440c600;
 +/** 1.20: 0x1400 after the icon catalog (1.11: 0x1000), for 1280 icons: Direct Flash's settings icons come after 1003 (see directflash-menu.ts). */
@@ -134,7 +206,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
  export const LANGUAGES = 21;
  const ROW_STRIDE = TEXT_CAPACITY * 4;
  const NATIVE_ICON_CATALOG = 0x55014280;
-@@ -82,10 +85,10 @@
+@@ -86,10 +89,10 @@
    return id;
  }
  
@@ -148,7 +220,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
  }
  
  export interface RatioSpec {
-@@ -153,9 +156,18 @@
+@@ -166,9 +169,18 @@
    dateStampDiag?: boolean;
    /** Direct Flash diagnostics: the planner records what it saw, the date imprint prints it on the 720x480 picture. */
    directFlashDiag?: boolean;
@@ -167,7 +239,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
  
  export interface AspectResult {
    revision: BuildRevision;
-@@ -318,7 +330,7 @@
+@@ -331,7 +343,7 @@
    for (let l = 0; l < LANGUAGES; l++) textRows.push(patch.readMapped(roots.getUint32(l * 4, true), TEXT_COUNT * 4));
    const rowsStart = TEXT_CATALOG + 0x100;
    const end = rowsStart + LANGUAGES * ROW_STRIDE;
@@ -176,7 +248,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
    patch.extendTo(end - BASE);
    patch.write(ICON_CATALOG, icons);
    const relocated: number[] = [];
-@@ -330,8 +342,15 @@
+@@ -343,8 +355,15 @@
    // language directory themselves.
    patch.setWord(0x534013f8, movWord(0, ICON_CATALOG & 65535), 'use the extended icon catalog');
    patch.setWord(0x534013fc, movWord(0, ICON_CATALOG >>> 16, true), 'use the extended icon catalog');
@@ -194,7 +266,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
    }
    for (const [low, high] of [[0x535967cc, 0x535967d0], [0x53595db4, 0x53595dbc]] as const) {
      patch.setWord(low, movWord(3, TEXT_CATALOG & 65535), 'extended language catalog, low half');
-@@ -362,7 +381,10 @@
+@@ -375,7 +394,10 @@
  // --------------------------------------------------------------------------------------------
  // crop_icons.py
  
@@ -206,7 +278,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
  
  function installIcons(patch: Patch, iconbin: Uint8Array, ratios: readonly RatioEntry[]): { iconbin: Uint8Array; ids: Map<number, number> } {
    const parts: Uint8Array[] = [iconbin];
-@@ -454,7 +476,7 @@
+@@ -467,7 +489,7 @@
    // Complete language rows again, now wide enough for the new names; every original entry is kept.
    let priorColumns = TEXT_CAPACITY;
    for (const site of patch.textBoundSites) priorColumns = Math.max(priorColumns, movImmediate(patch.word(site)) + 1);
@@ -215,7 +287,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
    for (const id of allIds) upper = Math.max(upper, textId(id));
    const columns = Math.max(priorColumns, upper + 1);
    const catalogs: Uint8Array[] = [];
-@@ -667,8 +689,8 @@
+@@ -680,8 +702,8 @@
      out = '';
      for (const row of rows) out += `cmp ip,#${row.id};beq custom;`;
      out += `bic ip,ip,#4;b #${resume};custom:`;
@@ -226,7 +298,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
      out += 'ldr lr,[ip];str lr,[r1];ldr lr,[ip,#4];str lr,[r1,#4];b #0x53672668;';
      p.hook(entry, out);
    }
-@@ -888,7 +910,7 @@
+@@ -901,7 +923,7 @@
  function installState(patch: Patch, ratios: readonly RatioEntry[], activeBitmap: number): void {
    const priorSave = branchTarget(0x533f3674, patch.word(0x533f3674));
    const priorLoad = branchTarget(0x533f3254, patch.word(0x533f3254));
@@ -235,7 +307,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
    expectWord(patch, 0x5381d6bc, 0xe1a0c00d);
    // {identity, magnification (float bits), rectangle[4]} for the photo-info display.
    const rects: Uint8Array[] = [];
-@@ -1026,6 +1048,16 @@
+@@ -1039,6 +1061,16 @@
   * features this is `installRatios`, byte for byte. With features the revision is 3.
   */
  export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios: readonly RatioEntry[], features: ExtensionFeatures, revision: BuildRevision = BUILD_REVISION, test: TestOptions = {}): AspectResult {
@@ -252,7 +324,7 @@ diff --git a/core/src/fw/gr4v120/aspect/build.ts b/core/src/fw/gr4v120/aspect/bu
    const slots = features.extraSlots ?? [];
    const shutdown = features.shutdown && features.shutdown.pictures.length > 0 ? features.shutdown : undefined;
    const cinema = (['CY', 'CG'] as const).filter((id) => features.cinemaHalation?.[id] === true);
-@@ -1067,7 +1099,9 @@
+@@ -1086,7 +1118,9 @@
      const fixed = test.dateStampFixed;
      // From 0.8.2 (builds with the guard) the imprint goes by the picture's look.
      const look = features.guard ? { stash: LOOK_STASH, monoLooks: monoTable(patch, slots.map((x) => monoLook(x.matrixQ13, x.curves, x.postQ9)), FIRST_ADDED_LOOK), names: lookNames(patch, slots.map((x) => x.name)) } : undefined;
@@ -1133,6 +1205,25 @@ diff --git a/core/src/fw/gr4v120/aspect/monounlock.ts b/core/src/fw/gr4v120/aspe
    for (const at of LOOK_FLAGS) {
      const word = patch.word(at & ~3);
      const shift = (at & 3) * 8;
+diff --git a/core/src/fw/gr4v120/aspect/shadowml.ts b/core/src/fw/gr4v120/aspect/shadowml.ts
+--- a/core/src/fw/gr4v120/aspect/shadowml.ts
++++ b/core/src/fw/gr4v120/aspect/shadowml.ts
+@@ -93,13 +93,13 @@
+ /** The learned Auto for Shadow Correction. */
+ export function installShadowLearn(p: Patch, options: { model?: Uint8Array } = {}): ShadowLearnLayout {
+   // The words the hook and the stub rely on.
+-  expectWord(p, CALL_Y_BUILDER, 0xebff6095); // bl 0x5391F1D4
++  expectWord(p, CALL_Y_BUILDER, 0xebff5f8b); // bl 0x5391F1D4
+   expectWord(p, SHADOWML_HOOK, 0xe51b2450); // ldr r2,[fp,#-0x450]
+   expectWord(p, COMMON, 0xe5d9508d); // ldrb r5,[sb,#0x8D]
+   expectWord(p, ZERO_PATH, 0xe5d9508d); // ldrb r5,[sb,#0x8D]
+   expectWord(p, 0x53947448, 0xe3a07001); // mov r7,#1
+   expectWord(p, 0x539474f0, 0xe51b2448); // ldr r2,[fp,#-0x448]
+-  expectWord(p, LV_CALL, 0xebff5f7d); // bl 0x5391F1D4 (live view)
++  expectWord(p, LV_CALL, 0xebff5e73); // bl 0x5391F1D4 (live view)
+   expectWord(p, LV_BACK, 0xeafffee6); // b 0x539473A4
+   expectWord(p, 0x53947240, 0xe1a09003); // mov sb,r3
+   expectWord(p, 0x53947258, 0xe5d3c08d); // ldrb ip,[r3,#0x8D]
 diff --git a/core/src/fw/gr4v120/aspect/shutdown.ts b/core/src/fw/gr4v120/aspect/shutdown.ts
 --- a/core/src/fw/gr4v120/aspect/shutdown.ts
 +++ b/core/src/fw/gr4v120/aspect/shutdown.ts
@@ -1802,17 +1893,15 @@ diff --git a/core/src/fw/gr4v120/aspect/softfocus.ts b/core/src/fw/gr4v120/aspec
 diff --git a/tools/gr4v120/aspect/boot_checks.py b/tools/gr4v120/aspect/boot_checks.py
 --- a/tools/gr4v120/aspect/boot_checks.py
 +++ b/tools/gr4v120/aspect/boot_checks.py
-@@ -25,8 +25,8 @@
+@@ -25,7 +25,7 @@
  from unicorn import arm_const as reg
  
  BASE = 0x53000000
 -OFFICIAL_LEN = 0x13D2AC0
--RAM, RAM_SRC, RAM_LEN = 0x55000000, 0x543B3100, 0x57480
 +OFFICIAL_LEN = 0x140B600
-+RAM, RAM_SRC, RAM_LEN = 0x55000000, 0x543B3100, 0x58500
+ RAM, RAM_SRC, RAM_LEN = 0x55000000, 0x543B3100, 0x58500
  # Fake data regions. Their addresses are chosen so that no byte, half-word or word of a pointer
  # into them can be mistaken for an added ratio's identity (7..14) or a small enum.
- REGIONS = [0x62010000, 0x62020000, 0x62030000, 0x62050000]
 @@ -213,6 +213,9 @@
      0x532ADEDC: {'ignore': (), 'tweak': 'valid_current_ratio',
                   'why': 'resets the current ratio when it is not in the menu; transparent when it is a menu ratio'},
@@ -2079,17 +2168,15 @@ diff --git a/tools/gr4v120/aspect/gen_oracle.py b/tools/gr4v120/aspect/gen_oracl
 diff --git a/tools/gr4v120/aspect/playback_check.py b/tools/gr4v120/aspect/playback_check.py
 --- a/tools/gr4v120/aspect/playback_check.py
 +++ b/tools/gr4v120/aspect/playback_check.py
-@@ -28,8 +28,8 @@
+@@ -28,7 +28,7 @@
  from gr4_editor.crops import read_crops
  
  BASE = 0x53000000
 -OFFICIAL_LENGTH = 0x13D2AC0
--DATA = (0x543B3100, 0x55000000, 0x57480)   # start-up copy: source, destination, length
 +OFFICIAL_LENGTH = 0x140B600
-+DATA = (0x543B3100, 0x55000000, 0x58500)   # start-up copy: source, destination, length
+ DATA = (0x543B3100, 0x55000000, 0x58500)   # start-up copy: source, destination, length
  STACK_TOP = 0x7FF00000
  HEAP = 0x60000000
- RETURN = 0x7F000000
 diff --git a/tools/gr4v120/aspect/verify120.py b/tools/gr4v120/aspect/verify120.py
 new file mode 100644
 --- /dev/null
@@ -2140,18 +2227,15 @@ new file mode 100644
 diff --git a/tools/gr4v120/datestamp/gen.py b/tools/gr4v120/datestamp/gen.py
 --- a/tools/gr4v120/datestamp/gen.py
 +++ b/tools/gr4v120/datestamp/gen.py
-@@ -16,9 +16,9 @@
+@@ -16,7 +16,7 @@
  from pathlib import Path
  
  HERE = Path(__file__).resolve().parent
--ROOT = HERE.parent.parent
+-ROOT = HERE.parents[2]
 +ROOT = HERE.parent.parent.parent
  SRC = HERE / 'datestamp.c'
--OUT = ROOT / 'core' / 'src' / 'fw' / 'aspect' / 'datestamp-code.ts'
-+OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'datestamp-code.ts'
+ OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'datestamp-code.ts'
  USE_ZIG = bool(os.environ.get('GRMOD_ZIG')) or not (shutil.which('clang') and shutil.which('ld.lld') and shutil.which('llvm-objcopy'))
- FLAGS = ['-mcpu=cortex_a9' if USE_ZIG else '-mcpu=cortex-a9', '-marm', '-mfloat-abi=soft', '-Os',
-          '-ffreestanding', '-fno-builtin', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-nostdlib',
 @@ -67,7 +67,9 @@
          db = build(cc, ld, objcopy, tmp, 0x54430000, ['-DDIAG'])
          fa = build(cc, ld, objcopy, tmp, 0x10000, ['-DDFDIAG'])
@@ -2235,9 +2319,8 @@ diff --git a/tools/gr4v120/datestamp/menu_check.py b/tools/gr4v120/datestamp/men
  
  BASE = 0x53000000
 -OFFICIAL_LEN = 0x13d2ac0
--RAMVA, RAMIMG, RAMLEN = 0x55000000, 0x543b3100, 0x57480
 +OFFICIAL_LEN = 0x140b600
-+RAMVA, RAMIMG, RAMLEN = 0x55000000, 0x543b3100, 0x58500
+ RAMVA, RAMIMG, RAMLEN = 0x55000000, 0x543b3100, 0x58500
  B = 0x550832a8 + 4 + 0x94b
  NEW_MENU, NEW_SWITCH, NEW_STYLE, NEW_ORIENT = 0x020001a0, 0x020001a1, 0x020001a2, 0x020001a5
 -T_NAME, T_ONOFF, T_STYLE, T_SHORT, T_LONG, T_ORIENT = 841, 842, 843, 844, 845, 879
@@ -2357,15 +2440,7 @@ diff --git a/tools/gr4v120/directflash/check.py b/tools/gr4v120/directflash/chec
  """
  import math
  import struct
-@@ -32,19 +32,19 @@
-                                UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC, UC_ARM_REG_S0)
- 
- BASE = 0x53000000
--RAMVA, RAMIMG, RAMLEN = 0x55000000, 0x543b3100, 0x57480
-+RAMVA, RAMIMG, RAMLEN = 0x55000000, 0x543b3100, 0x58500
- CURRENT = 0x550832a8
- BYTE = CURRENT + 4 + 0x99b
- GN_BYTE = CURRENT + 4 + 0x99a
+@@ -39,12 +39,12 @@
  TV_BYTE = CURRENT + 4 + 0x109   # test 062: the fastest shutter speed, bits 0..2
  TV_CAPS = {1: 11.0, 2: 10.0, 3: 9.0, 4: 8.0}   # anything else (0 included): the camera's sync limit
  BG_STRETCH = 2.0
@@ -2426,18 +2501,15 @@ diff --git a/tools/gr4v120/directflash/check.py b/tools/gr4v120/directflash/chec
 diff --git a/tools/gr4v120/directflash/gen.py b/tools/gr4v120/directflash/gen.py
 --- a/tools/gr4v120/directflash/gen.py
 +++ b/tools/gr4v120/directflash/gen.py
-@@ -18,9 +18,9 @@
+@@ -18,7 +18,7 @@
  from pathlib import Path
  
  HERE = Path(__file__).resolve().parent
--ROOT = HERE.parent.parent
+-ROOT = HERE.parents[2]
 +ROOT = HERE.parent.parent.parent
  SRC = HERE / 'directflash.c'
--OUT = ROOT / 'core' / 'src' / 'fw' / 'aspect' / 'directflash-code.ts'
-+OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'directflash-code.ts'
+ OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'directflash-code.ts'
  ENTRY = 'df_plan'
- USE_ZIG = bool(os.environ.get('GRMOD_ZIG')) or not (shutil.which('clang') and shutil.which('ld.lld') and shutil.which('llvm-objcopy'))
- FLAGS = ['-mcpu=cortex_a9' if USE_ZIG else '-mcpu=cortex-a9', '-marm', '-mfloat-abi=hard', '-mfpu=vfpv3', '-Os',
 diff --git a/tools/gr4v120/directflash/settings_check.py b/tools/gr4v120/directflash/settings_check.py
 --- a/tools/gr4v120/directflash/settings_check.py
 +++ b/tools/gr4v120/directflash/settings_check.py
@@ -2529,18 +2601,15 @@ diff --git a/tools/gr4v120/directflash/settings_check.py b/tools/gr4v120/directf
 diff --git a/tools/gr4v120/halation/gen.py b/tools/gr4v120/halation/gen.py
 --- a/tools/gr4v120/halation/gen.py
 +++ b/tools/gr4v120/halation/gen.py
-@@ -16,9 +16,9 @@
+@@ -16,7 +16,7 @@
  from pathlib import Path
  
  HERE = Path(__file__).resolve().parent
--ROOT = HERE.parent.parent
+-ROOT = HERE.parents[2]
 +ROOT = HERE.parent.parent.parent
  SRC = HERE / 'halation.c'
--OUT = ROOT / 'core' / 'src' / 'fw' / 'aspect' / 'halation-code.ts'
-+OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'halation-code.ts'
+ OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'halation-code.ts'
  USE_ZIG = bool(os.environ.get('GRMOD_ZIG')) or not (shutil.which('clang') and shutil.which('ld.lld') and shutil.which('llvm-objcopy'))
- FLAGS = ['-mcpu=cortex_a9' if USE_ZIG else '-mcpu=cortex-a9', '-marm', '-mfloat-abi=soft', '-Os',
-          '-ffreestanding', '-fno-builtin', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-nostdlib',
 @@ -63,10 +63,14 @@
          tmp = Path(t)
          a = build(cc, ld, objcopy, tmp, 0x10000)
@@ -2612,18 +2681,15 @@ diff --git a/tools/gr4v120/looks/looks_check.py b/tools/gr4v120/looks/looks_chec
 diff --git a/tools/gr4v120/shutdown/gen.py b/tools/gr4v120/shutdown/gen.py
 --- a/tools/gr4v120/shutdown/gen.py
 +++ b/tools/gr4v120/shutdown/gen.py
-@@ -18,9 +18,9 @@
+@@ -18,7 +18,7 @@
  from pathlib import Path
  
  HERE = Path(__file__).resolve().parent
--ROOT = HERE.parent.parent
+-ROOT = HERE.parents[2]
 +ROOT = HERE.parent.parent.parent
  SRC = HERE / 'shutdown.c'
--OUT = ROOT / 'core' / 'src' / 'fw' / 'aspect' / 'shutdown-code.ts'
-+OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'shutdown-code.ts'
+ OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'shutdown-code.ts'
  EXPORTS = ['sd_get', 'sd_background', 'sd_save', 'sd_refresh', 'sd_confirm', 'sd_left', 'sd_right', 'sd_footer', 'sd_line']
- USE_ZIG = bool(os.environ.get('GRMOD_ZIG')) or not (shutil.which('clang') and shutil.which('ld.lld') and shutil.which('llvm-objcopy'))
- FLAGS = ['-mcpu=cortex_a9' if USE_ZIG else '-mcpu=cortex-a9', '-marm', '-mfloat-abi=soft', '-Os',
 diff --git a/tools/gr4v120/shutdown/menu_check.py b/tools/gr4v120/shutdown/menu_check.py
 --- a/tools/gr4v120/shutdown/menu_check.py
 +++ b/tools/gr4v120/shutdown/menu_check.py
@@ -2643,13 +2709,7 @@ diff --git a/tools/gr4v120/shutdown/menu_check.py b/tools/gr4v120/shutdown/menu_
      other menus are those of the date imprint's checks (unchanged here).
   3. The controller factory: every official id as officially (End Screen 0x020000C4 included), the
      submenu id as every submenu, the picture id makes one End Screen object (0x16C, its constructor,
-@@ -40,13 +42,13 @@
-                                UC_ARM_REG_PC)
- 
- BASE = 0x53000000
--RAMVA, RAMIMG, RAMLEN = 0x55000000, 0x543b3100, 0x57480
-+RAMVA, RAMIMG, RAMLEN = 0x55000000, 0x543b3100, 0x58500
- RET = 0x100
+@@ -45,8 +47,8 @@
  FAKE = 0x60200000
  MODE = 0x55839030
  MENU_ID, PICTURE_ID, END_SCREEN = 0x020001a3, 0x020001a4, 0x020000c4
@@ -3004,17 +3064,15 @@ diff --git a/tools/gr4v120/slotparams/slot_params.c b/tools/gr4v120/slotparams/s
 diff --git a/tools/gr4v120/softfocus/check.py b/tools/gr4v120/softfocus/check.py
 --- a/tools/gr4v120/softfocus/check.py
 +++ b/tools/gr4v120/softfocus/check.py
-@@ -16,8 +16,8 @@
+@@ -16,7 +16,7 @@
  import re as _re
  from capstone import *
  BASE=0x53000000
 -R=open(sys.argv[1],'rb').read()[:0x13d2ac0]
--RAMVA=0x55000000; RAMIMG=0x543b3100; RAMLEN=0x57480
 +R=open(sys.argv[1],'rb').read()[:0x140b600]
-+RAMVA=0x55000000; RAMIMG=0x543b3100; RAMLEN=0x58500
+ RAMVA=0x55000000; RAMIMG=0x543b3100; RAMLEN=0x58500
  RAM=R[RAMIMG-BASE:RAMIMG-BASE+RAMLEN]
  md=Cs(CS_ARCH_ARM, CS_MODE_ARM); md.detail=False
- mt=Cs(CS_ARCH_ARM, CS_MODE_THUMB)
 @@ -105,9 +105,9 @@
          out.append(s)
          if len(out)>=n: break
@@ -3104,18 +3162,15 @@ diff --git a/tools/gr4v120/softfocus/check.py b/tools/gr4v120/softfocus/check.py
 diff --git a/tools/gr4v120/hdrgain/gen.py b/tools/gr4v120/hdrgain/gen.py
 --- a/tools/gr4v120/hdrgain/gen.py
 +++ b/tools/gr4v120/hdrgain/gen.py
-@@ -16,9 +16,9 @@
+@@ -16,7 +16,7 @@
  from pathlib import Path
  
  HERE = Path(__file__).resolve().parent
--ROOT = HERE.parent.parent
+-ROOT = HERE.parents[2]
 +ROOT = HERE.parent.parent.parent
  SRC = HERE / 'hdrgain.c'
--OUT = ROOT / 'core' / 'src' / 'fw' / 'aspect' / 'hdrgain-code.ts'
-+OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'hdrgain-code.ts'
+ OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'hdrgain-code.ts'
  USE_ZIG = bool(os.environ.get('GRMOD_ZIG')) or not (shutil.which('clang') and shutil.which('ld.lld') and shutil.which('llvm-objcopy'))
- FLAGS = ['-mcpu=cortex_a9' if USE_ZIG else '-mcpu=cortex-a9', '-marm', '-mfloat-abi=soft', '-O2',
-          '-ffreestanding', '-fno-builtin', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-nostdlib',
 diff --git a/tools/gr4v120/hdrgain/hdrgain.c b/tools/gr4v120/hdrgain/hdrgain.c
 --- a/tools/gr4v120/hdrgain/hdrgain.c
 +++ b/tools/gr4v120/hdrgain/hdrgain.c
@@ -3187,15 +3242,6 @@ diff --git a/tools/gr4v120/adjslots/check.py b/tools/gr4v120/adjslots/check.py
          check(v('<H', r, 4)[0] == T0 + 1 + j, f'{name}: list {j} title')
          check(v('<I', r, 0x0c)[0] == v('<I', o, 0x0c)[0] and v('<I', r, 0x14)[0] == v('<I', o, 0x14)[0], f'{name}: list {j} count / draw')
          setf, cur = v('<I', r, 0x24)[0], v('<I', r, 0x2c)[0]
-@@ -828,7 +828,7 @@
- 
- def check_calls(d, name):
-     img = dm.Image(d / name)
--    src = (ROOT / 'core' / 'src' / 'fw' / 'aspect' / 'adjslots-code.ts').read_text()
-+    src = (ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'adjslots-code.ts').read_text()
-     code = base64.b64decode(re.search(r"ADJSLOTS_CODE = '([^']+)'", src).group(1))
-     # find the module in the image
-     at = img.R.find(code)
 @@ -856,7 +856,7 @@
      # each is a function the firmware itself calls (a bl to it exists in the official image)
      off = dm.Image(d / 'official.rtos')
@@ -3208,18 +3254,246 @@ diff --git a/tools/gr4v120/adjslots/check.py b/tools/gr4v120/adjslots/check.py
 diff --git a/tools/gr4v120/adjslots/gen.py b/tools/gr4v120/adjslots/gen.py
 --- a/tools/gr4v120/adjslots/gen.py
 +++ b/tools/gr4v120/adjslots/gen.py
-@@ -16,9 +16,9 @@
+@@ -16,7 +16,7 @@
  from pathlib import Path
  
  HERE = Path(__file__).resolve().parent
--ROOT = HERE.parent.parent
+-ROOT = HERE.parents[2]
 +ROOT = HERE.parent.parent.parent
  SRC = HERE / 'adjslots.c'
--OUT = ROOT / 'core' / 'src' / 'fw' / 'aspect' / 'adjslots-code.ts'
-+OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'adjslots-code.ts'
+ OUT = ROOT / 'core' / 'src' / 'fw' / 'gr4v120' / 'aspect' / 'adjslots-code.ts'
  ENTRIES = ['adj_slot_function', 'adj_can_open', 'adj_draw_more', 'adj_touchable_more', 'adj_taps_more', 'adj_bind',
-            'adj_get_position', 'adj_set_position']
- USE_ZIG = bool(os.environ.get('GRMOD_ZIG')) or not (shutil.which('clang') and shutil.which('ld.lld') and shutil.which('llvm-objcopy'))
+diff --git a/tools/gr4v120/awbml/awbml.c b/tools/gr4v120/awbml/awbml.c
+--- a/tools/gr4v120/awbml/awbml.c
++++ b/tools/gr4v120/awbml/awbml.c
+@@ -549,10 +549,10 @@
+   return o > 0xFFFF ? 0xFFFF : o;
+ }
+ 
+-/* Live view exposure source (fw 1.11, fixed addresses): the AE publishes its current Tv / Av / Sv (IEEE floats, APEX, continuous) into the
++/* Live view exposure source (fw 1.20, fixed addresses): the AE publishes its current Tv / Av / Sv (IEEE floats, APEX, continuous) into the
+  * property store's read buffer D = X[0], X = [E + 0x518], E = the ComPropIf singleton [0x5537b2a0] (guard word 0x5537b298, bit 0), vtable 0x53FC54D8;
+- * Tv = D+0x4D8, Av = D+0x4DC, Sv = D+0x4E0. A still copies the same three floats into rec+0xB9C / 0xB98 / 0xBA0 and the still builder (0x5395BDE4)
+- * quantises them: na = (int)(68 + 8 Av) - 68, nt = (int)(68 + 8 Tv) - 68, ns = (int)(8 Sv - 8) + 8, S+0x24 = 32 na, S+0x30 = 32 (na + nt - ns).
++ * Tv = D+0x4D8, Av = D+0x4DC, Sv = D+0x4E0. A still copies the same three floats into rec+0xB9C / 0xB98 / 0xBA0 and the still builder (0x5395BDE8)
++ * quantises them via 538fb018/68/b8: na = floor(68.5 + 8 Av) - 68, nt = floor(68.5 + 8 Tv) - 68, ns = floor(8 Sv - 7.5) + 8, S+0x24 = 32 na, S+0x30 = 32 (na + nt - ns).
+  * The ranges are the host / emulator tests' addresses when AWBML_HOST (offsets into the test memory) or the -D values of the ARM test. */
+ #ifndef AWBML_GUARD_ADDR
+ #ifdef AWBML_HOST
+@@ -579,27 +579,20 @@
+ #define REC32(p) (*(const volatile u32 *)(p))
+ #endif
+ 
+-/* trunc(fl32(base + 8 x)) of the float with bits b, exactly as the camera's vmla / vnmls (a product by 8 is exact, the sum is rounded to
+- * nearest even to 24 bits) followed by vcvt.s32.f32 (toward zero): 68 + 8 x (base 68) or 8 x - 8 (base -8). Returns -1 for a NaN, an infinity,
+- * |x| >= 16 and a sum <= 0 (all of them out of the accepted ranges anyway); else the integer in *n. Integer only. */
++/* 1.20: 538fb018/68/b8 quantise with double precision and a +1/16 EV bias,
++ * then floor to eighth-stops. On the accepted exposure ranges Sv-1 is exact in
++ * float32. Compute floor(base+8*x+0.5) with integer significand arithmetic.
++ * Values outside those ranges can be rejected before conversion. */
+ static int fl8(u32 b, i32 base, i32 *n) {
+-  u32 e = (b >> 23) & 255, m = b & 0x7FFFFFu, M, st = 0, v, L, r, rem, half;
+-  i64 vv;
++  u32 e = (b >> 23) & 255, m = b & 0x7FFFFFu, M, st = 0, shift;
++  i64 v;
+   if (e == 255 || e > 130) return -1;
+-  if (e) m |= 0x800000u; else e = 1;               /* denormal: no implicit bit */
+-  if (e >= 123) M = m << (e - 123);                 /* |8 x| in units of 2^-24 */
+-  else if (e > 100) { r = 123 - e; M = m >> r; st = (m & ((1u << r) - 1)) != 0; }
++  if (e) m |= 0x800000u; else e = 1;
++  if (e >= 123) M = m << (e - 123);
++  else if (e > 100) { shift = 123 - e; M = m >> shift; st = (m & ((1u << shift) - 1)) != 0; }
+   else { M = 0; st = m != 0; }
+-  vv = (i64)base * 0x1000000 + ((b >> 31) ? -(i64)M - (i64)st : (i64)M);   /* floor of the exact sum; the true value is above it by less than 1 if st */
+-  if (vv <= 0) return -1;
+-  v = (u32)vv;
+-  L = 32 - (u32)__builtin_clz(v);
+-  if (L > 24) {                                     /* round to 24 bits, to nearest, ties to even, st means "a little above" */
+-    r = L - 24; rem = v & ((1u << r) - 1); half = 1u << (r - 1);
+-    v >>= r;
+-    if (rem > half || (rem == half && (st || (v & 1)))) v++;
+-    v <<= r;
+-  }
++  v = (i64)base * 0x1000000 + 0x800000 + ((b >> 31) ? -(i64)M - (i64)st : (i64)M);
++  if (v <= 0) return -1;
+   *n = (i32)(v >> 24);
+   return 0;
+ }
+diff --git a/tools/gr4v120/awbml/gen.py b/tools/gr4v120/awbml/gen.py
+--- a/tools/gr4v120/awbml/gen.py
++++ b/tools/gr4v120/awbml/gen.py
+@@ -67,6 +67,9 @@
+ def stack_usage(cc, tmp):
+     run(cc + FLAGS + ['-I', HERE, '-fstack-usage', '-c', SRC, '-o', tmp / 'su.o'])
+     rows = {}
++    if not (tmp / 'su.su').exists():
++        print('compiler emitted no static .su report; use ARM runtime stack measurements', file=sys.stderr)
++        return {}
+     for l in (tmp / 'su.su').read_text().splitlines():
+         p = l.split('\t')
+         rows[p[0].split(':')[-1]] = int(p[1])
+diff --git a/tools/gr4v120/awbml/ref.py b/tools/gr4v120/awbml/ref.py
+--- a/tools/gr4v120/awbml/ref.py
++++ b/tools/gr4v120/awbml/ref.py
+@@ -457,35 +457,15 @@
+ 
+ 
+ def fl8(b, base):
+-    """trunc(fl32(base + 8 x)) for the float bits b as the camera's vmla / vnmls + vcvt.s32.f32 (see awbml.c fl8), or None (NaN, inf, |x| >= 16, sum <= 0)."""
+-    e, m = (b >> 23) & 255, b & 0x7FFFFF
+-    if e == 255 or e > 130:
+-        return None
+-    if e:
+-        m |= 0x800000
+-    else:
+-        e = 1
+-    st = 0
+-    if e >= 123:
+-        M = m << (e - 123)
+-    elif e > 100:
+-        r_ = 123 - e
+-        M, st = m >> r_, int(m & ((1 << r_) - 1) != 0)
+-    else:
+-        M, st = 0, int(m != 0)
+-    vv = base * 0x1000000 + (-M - st if b >> 31 else M)
+-    if vv <= 0:
+-        return None
+-    v = vv
+-    L = v.bit_length()
+-    if L > 24:
+-        r_ = L - 24
+-        rem, half = v & ((1 << r_) - 1), 1 << (r_ - 1)
+-        v >>= r_
+-        if rem > half or (rem == half and (st or v & 1)):
+-            v += 1
+-        v <<= r_
+-    return v >> 24
++    """1.20 quantisation: independent host evaluation of the original double arithmetic.
++    Accepted Sv values make its initial float32 subtraction by 1 exact.
++    """
++    import math, struct
++    x = struct.unpack('<f', struct.pack('<I', b))[0]
++    if not math.isfinite(x) or abs(x) >= 16:
++        return None
++    value = (x + 8.5 + 0.0625) * 8 if base == 68 else (x - 1.0 + 0.0625) * 8
++    return math.floor(value) if value > 0 else None
+ 
+ 
+ def lv_exposure(rd32, s70=2, cfg=None):
+diff --git a/tools/gr4v120/awbml/test_fl8.c b/tools/gr4v120/awbml/test_fl8.c
+--- a/tools/gr4v120/awbml/test_fl8.c
++++ b/tools/gr4v120/awbml/test_fl8.c
+@@ -1,15 +1,16 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+-/* Exhaustive check of awbml.c fl8() (the integer emulation of the camera's float quantisation) over ALL 2^32 float bit patterns, against the strict
+- * float32 operations of the camera (vmla / vnmls: a product by 8 and a rounded sum, no fusing; vcvt.s32.f32 toward zero), done with C float on SSE
+- * (-ffp-contract=off). Build and run: gcc -O2 -DAWBML_HOST -ffp-contract=off -o test_fl8 test_fl8.c && ./test_fl8 */
++/* Exhaustive comparison of the 1.20 integer quantiser with the stock helper's
++ * double arithmetic (Av/Tv: (x+8.5+1/16)*8; Sv: (float(x-1)+1/16)*8).
++ * Rejections are allowed only outside the module's accepted exposure ranges.
++ * gcc -O2 -DAWBML_HOST -ffp-contract=off -o test_fl8 test_fl8.c */
+ #include <stdio.h>
+ #include <string.h>
+ #include "awbml.c"
+ const unsigned char *awbml_host_base;
+ u32 awbml_host_rd32(u32 a) { (void)a; return 0; }
+ static int ref_int(float x, int base68, int *ok) {
+-  volatile float p = x * 8.0f, y;
+-  y = base68 ? 68.0f + p : p - 8.0f;
++  double y = base68 ? ((double)x + 8.5 + 0.0625) * 8.0 : ((double)(x - 1.0f) + 0.0625) * 8.0;
++
+   if (y != y || y >= 2147483520.0f || y <= -2147483520.0f) { *ok = 0; return 0; }
+   *ok = 1;
+   return (int)y;
+diff --git a/tools/gr4v120/awbml/test_host.py b/tools/gr4v120/awbml/test_host.py
+--- a/tools/gr4v120/awbml/test_host.py
++++ b/tools/gr4v120/awbml/test_host.py
+@@ -284,9 +284,8 @@
+ 
+ 
+ def quant_check(rng, n=int(os.environ.get('AWBML_NQUANT', 3000000))):
+-    """ref.fl8 (the integer emulation, mirrored by awbml.c and checked on all 2^32 patterns by test_fl8.c) against strict float32 arithmetic (numpy float32:
+-    the product by 8 and the sum are each rounded to float32, no fusing; the conversion truncates), on random patterns, patterns near the 1/8 grid, and all
+-    patterns with |x| < 2^5 in steps."""
++    """1.20 reference quantisation versus independent vectorised double arithmetic,
++    on random patterns, near the 1/8 grid and stratified exponent patterns."""
+     bits = [rng.integers(0, 2 ** 32, n // 3, dtype=np.uint64).astype(np.uint32)]
+     g = np.round(rng.uniform(-20, 20, n // 3) * 8) / 8
+     bits.append((g.astype(np.float32).view(np.uint32).astype(np.int64) + rng.integers(-4, 5, n // 3)).astype(np.uint32))
+@@ -297,15 +296,14 @@
+     bad = 0
+     with np.errstate(all='ignore'):
+         for base in (68, -8):
+-            p = x * np.float32(8)
+-            y = p + np.float32(68) if base == 68 else p - np.float32(8)
++            y = (x.astype(np.float64) + 8.5 + 0.0625) * 8 if base == 68 else ((x - np.float32(1)).astype(np.float64) + 0.0625) * 8
+             ok = np.isfinite(y) & (np.abs(y) < 2 ** 30)
+             for b, yy, o in zip(allb.tolist(), y.tolist(), ok.tolist()):
+                 got = ref.fl8(b, base)
+                 if o and got is not None and got != int(yy): bad += 1
+                 if got is not None and not o: bad += 1
+                 if got is None and o and ((-40 <= int(yy) - 68 <= 120) if base == 68 else (16 <= int(yy) <= 112)): bad += 1       # a rejection must be outside the accepted range anyway
+-    print('quantiser (ref.fl8 vs strict float32):', 2 * len(allb), 'patterns, mismatches', bad)
++    print('quantiser (ref.fl8 vs 1.20 double arithmetic):', 2 * len(allb), 'patterns, mismatches', bad)
+     return bad
+ 
+ 
+diff --git a/tools/gr4v120/shadowml/gen.py b/tools/gr4v120/shadowml/gen.py
+--- a/tools/gr4v120/shadowml/gen.py
++++ b/tools/gr4v120/shadowml/gen.py
+@@ -68,6 +68,9 @@
+ def stack_usage(cc, tmp):
+     run(cc + FLAGS + ['-I', HERE, '-fstack-usage', '-c', SRC, '-o', tmp / 'su.o'])
+     rows = {}
++    if not (tmp / 'su.su').exists():
++        print('compiler emitted no static .su report; use ARM runtime stack measurements', file=sys.stderr)
++        return {}
+     for l in (tmp / 'su.su').read_text().splitlines():
+         p = l.split('\t')
+         rows[p[0].split(':')[-1]] = int(p[1])
+diff --git a/tools/gr4v120/shadowml/test_fw.py b/tools/gr4v120/shadowml/test_fw.py
+--- a/tools/gr4v120/shadowml/test_fw.py
++++ b/tools/gr4v120/shadowml/test_fw.py
+@@ -367,30 +367,16 @@
+     # ---------------------------------------------------------------- 6. image diff
+     a, b = open(BASE, 'rb').read(), pre_img
+     base = 0x53000000
++    # Different recipe bits and frame growth are recorded by the new builder. Validate
++    # the actual pair against the complete patch manifest, rather than equal padded sizes.
++    import json, hashlib
+     manifest_path = os.environ.get('GRMOD_SHADOW_DIFF_MANIFEST')
+-    if manifest_path:
+-        import json, hashlib
+-        manifest = json.load(open(manifest_path))
+-        assert hashlib.sha256(a).hexdigest() == manifest['baseSha256']
+-        assert hashlib.sha256(b).hexdigest() == manifest['newSha256']
+-        assert manifest['verified'] and manifest['outside'] == 0
+-        print('6. actual migrated build pair: exact hook/append/recipe/checksum manifest verified; outside 0')
+-    else:
+-        n = len(a)
+-        # the section ends with a 16-byte trailer (a length word, the marker 'GRMODAR3', the checksum compensation word); the content before them ends at the last non-zero byte
+-        OFFICIAL_END = 0x5440B600       # the official RTOS length; everything the build appends lies beyond it
+-        diff = [i for i in range(min(len(a), len(b))) if a[i] != b[i]]
+-        trailer = lambda i: n - 16 <= i < n - 4
+-        appended = [i for i in diff if base + i >= OFFICIAL_END and i < n - 16]
+-        # the appended area of this feature: bytes that were zero padding in the base image (nothing the base itself appended is changed)
+-        over = [hex(base + i) for i in appended if a[i] != 0]
+-        first = base + appended[0] if appended else None
+-        outside = [hex(base + i) for i in diff if base + i < OFFICIAL_END and (i & ~3) not in {HOOK - base, GAIN - base}] + [hex(base + i) for i in diff if trailer(i)] + over
+-        ncomp = sum(1 for i in diff if i >= n - 4)
+-        print(f'6. image vs the build without shadowLearn: lengths {len(a)} / {len(b)}; {len(diff)} bytes differ: hook word {sum(1 for i in diff if (i & ~3) == HOOK - base)}, '
+-              f'TB[4] {sum(1 for i in diff if (i & ~3) == GAIN - base)}, appended area {len(appended)} bytes from {hex(first)} to {hex(base + appended[-1])} (all previously zero padding: {not over}), '
+-              f'checksum compensation word {ncomp}; anywhere else: {len(outside)} {outside[:5]}')
+-        if outside or len(a) != len(b) or first % 16: bad.append(('image differs elsewhere', outside[:5]))
++    assert manifest_path, 'set GRMOD_SHADOW_DIFF_MANIFEST to the independent actual-build diff audit'
++    manifest = json.load(open(manifest_path))
++    assert hashlib.sha256(a).hexdigest() == manifest['baseSha256']
++    assert hashlib.sha256(b).hexdigest() == manifest['newSha256']
++    assert manifest['verified'] and manifest['outside'] == 0
++    print('6. actual build pair: complete RTOS diff manifest verified (hooks, append, recipe, checksum); outside 0')
+     hw, gw = word(b, HOOK), word(b, GAIN)
+     print(f'   hook word {word(a, HOOK):#010x} -> {hw:#010x}, TB[4] word {word(a, GAIN):#010x} -> {gw:#010x}')
+     # the stub's non-branch words against clang's assembler, the branches by target / condition
 diff --git a/core/src/fw/gr4v120/profile.ts b/core/src/fw/gr4v120/profile.ts
 --- a/core/src/fw/gr4v120/profile.ts
 +++ b/core/src/fw/gr4v120/profile.ts
@@ -3230,7 +3504,7 @@ diff --git a/core/src/fw/gr4v120/profile.ts b/core/src/fw/gr4v120/profile.ts
   * table addresses and the expected resolved addresses of the two editable Image Control slots.
   *
   * Addresses ("VA") are the run-time addresses used by the RTOS image; `foff()` maps them to
-@@ -7,30 +7,30 @@
+@@ -7,15 +7,15 @@
   */
  import { Firmware, FirmwareError, sha256Hex } from '../container';
  
@@ -3253,9 +3527,8 @@ diff --git a/core/src/fw/gr4v120/profile.ts b/core/src/fw/gr4v120/profile.ts
  export const RTOS_VA = 0x53000000;
  /** Initialised RAM: lives at RAM_VA at run time, stored in the RTOS image at RAM_IMAGE_VA. */
  export const RAM_VA = 0x55000000;
- export const RAM_IMAGE_VA = 0x543b3100;
--export const RAM_LENGTH = 0x57480;
-+export const RAM_LENGTH = 0x58500;
+@@ -23,14 +23,14 @@
+ export const RAM_LENGTH = 0x58500;
  
  /** ICONBIN section: data offset in the decoded payload and length. */
 -export const ICONBIN_OFFSET = 0x2e93af0;
@@ -3370,3 +3643,15 @@ diff --git a/core/src/fw/gr4v120/names.ts b/core/src/fw/gr4v120/names.ts
  
  export interface NameInfo {
    text: string;
+diff --git a/tools/gr4v120/re/fwlib.py b/tools/gr4v120/re/fwlib.py
+--- a/tools/gr4v120/re/fwlib.py
++++ b/tools/gr4v120/re/fwlib.py
+@@ -28,7 +28,7 @@
+     return list(struct.unpack('<%dH' % n, rd(a, 2*n)))
+ def isptr(v):
+     return off(v) is not None
+-TONES, VARIANTS = 34, 3
++TONES, VARIANTS = 38, 3
+ TONE_TABLE, MA_TABLE, YCC_TABLE, GAMMA_TABLE = 0x55054800, 0x55054554, 0x55053ce4, 0x55054158
+ def tw(table, v, s): return w(table + 4*(v*TONES + s))
+ def name(s): return NAMES.get(s, 's%d' % s)

@@ -34,6 +34,10 @@ import { DATESTAMP_BYTE, installDateStamp, lookNames } from './datestamp';
 import { HDR_SWITCH_BYTE, installHdrGainMap } from './hdrgain';
 import { hdrTopDraw, installDateStampMenu, installHdrMenu, installHdrStillLine } from './datestamp-menu';
 import { installMonoUnlock } from './monounlock';
+import { installAwbLearn } from './awbml';
+import { installShadowLearn } from './shadowml';
+import { installAwbFit } from './awbfit';
+import { installBrightAuto } from './brightauto';
 import { CINEMA_STYLES, installExtraSlots, installHalation } from './slots';
 import { halationLight } from './halation';
 import type { HalationLook } from './halation';
@@ -116,6 +120,15 @@ export const BUILD_REVISION: BuildRevision = 2;
 
 /** Additions of this program that are not aspect ratios. */
 export interface ExtensionFeatures {
+  /** Learned AWB for plain Auto; independent of the fitted fallback tables. */
+  awbLearn?: boolean;
+  /** Learned Shadow Correction Auto. */
+  shadowLearn?: boolean;
+  /** Fitted plain-Auto fallback tables. */
+  awbFit?: boolean;
+  /** Brighter Auto backlight curve; true selects bright. */
+  brightAuto?: boolean | 'bright' | 'balanced';
+
   /** Soft focus as a function of the ADJ lever (see `softfocus.ts`). */
   adjSoftFocus?: boolean;
   /** Date imprint on the JPEG (see `datestamp.ts`). */
@@ -1030,7 +1043,7 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
   const shutdown = features.shutdown && features.shutdown.pictures.length > 0 ? features.shutdown : undefined;
   const cinema = (['CY', 'CG'] as const).filter((id) => features.cinemaHalation?.[id] === true);
   const adjSlots = features.adjSlots && features.adjSlots > 5 ? features.adjSlots : 0;
-  const extra = !!features.adjSoftFocus || !!features.dateStamp || !!features.monoUnlock || slots.length > 0 || !!shutdown || !!features.guard || cinema.length > 0 || !!features.directFlash || adjSlots > 0 || !!features.hdrGainMap;
+  const extra = !!features.awbLearn || !!features.shadowLearn || !!features.awbFit || !!features.brightAuto || !!features.adjSoftFocus || !!features.dateStamp || !!features.monoUnlock || slots.length > 0 || !!shutdown || !!features.guard || cinema.length > 0 || !!features.directFlash || adjSlots > 0 || !!features.hdrGainMap;
   if (extra) revision = 3;
   if (revision !== 1 && revision !== 2 && revision !== 3) fail('internal', 'unknown build revision');
   if (rtos.length !== OFFICIAL_RTOS_LENGTH || iconbin.length !== OFFICIAL_ICONBIN_LENGTH) fail('unexpected-layout', 'RTOS or ICONBIN does not have the official length');
@@ -1039,6 +1052,12 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
   ratios.forEach((r, i) => {
     if (r.id !== FIRST_CUSTOM_ID + i) fail('internal', 'ratio identities must be consecutive');
   });
+  for (const key of ['awbLearn', 'shadowLearn', 'awbFit'] as const)
+    if (features[key] !== undefined && typeof features[key] !== 'boolean') fail('bad-edit', `${key} must be boolean`);
+  if (features.brightAuto !== undefined && ![true, false, 'bright', 'balanced'].includes(features.brightAuto))
+    fail('bad-edit', 'brightAuto must be boolean, bright or balanced');
+  if ((features.awbLearn || features.shadowLearn) && (features.hdrGainMap || test.hdrDiag || ('halationDiag' in test && test.halationDiag) || test.directFlashDiag))
+    fail('bad-edit', 'learned AWB/shadow share reserved RAM with HDR and diagnostic counters; disable those combinations');
   const patch = new Patch(rtos);
   const ramCopy = new DataView(patch.read(BASE + 0x450, 12).buffer);
   if (ramCopy.getUint32(0, true) !== RAM.source || ramCopy.getUint32(4, true) !== RAM.destination || ramCopy.getUint32(8, true) !== RAM.length) {
@@ -1103,7 +1122,11 @@ export function installExtensions(rtos: Uint8Array, iconbin: Uint8Array, ratios:
   if (adjSlots > 0) installAdjSlots(patch, adjSlots);
   // Last: wraps every other settings save/load and user-mode recall hook.
   if (features.guard) installSettingsGuard(patch, { slots: slots.length, ratios: ratios.length > 0, adjSoftFocus: !!features.adjSoftFocus, ...(features.lookLayout ? { hiddenLooks: features.lookLayout.hidden } : {}), ...(adjSlots > 0 ? { adjSlots } : {}), ...(features.hdrGainMap ? { hdr: true } : {}) });
+  if (features.brightAuto) installBrightAuto(patch, features.brightAuto === 'balanced' ? 'balanced' : 'bright');
+  if (features.awbFit) installAwbFit(patch);
+  if (features.awbLearn) installAwbLearn(patch);
+  if (features.shadowLearn) installShadowLearn(patch);
   if (patch.length % 4 !== 0) fail('internal', 'image length is not a multiple of 4');
   if (BASE + patch.length >= APPEND_LIMIT) fail('too-many-ratios', 'the appended area would reach the RAM area');
-  return { revision, rtos: patch.bytes(), iconbin: icons, ratios: [...ratios], words: patch.words, features: { adjSoftFocus: !!features.adjSoftFocus, ...(features.dateStamp ? { dateStamp: true } : {}), ...(features.monoUnlock ? { monoUnlock: true } : {}), ...(slots.length > 0 ? { extraSlots: [...slots] } : {}), ...(shutdown ? { shutdown } : {}), ...(features.guard ? { guard: true } : {}), ...(cinema.length > 0 ? { cinemaHalation: Object.fromEntries(cinema.map((id) => [id, true])) } : {}), ...(features.lookLayout ? { lookLayout: features.lookLayout } : {}), ...(features.directFlash ? { directFlash: true } : {}), ...(features.hdrGainMap ? { hdrGainMap: true } : {}), ...(adjSlots > 0 ? { adjSlots } : {}) } };
+  return { revision, rtos: patch.bytes(), iconbin: icons, ratios: [...ratios], words: patch.words, features: { ...(features.awbLearn ? { awbLearn: true } : {}), ...(features.shadowLearn ? { shadowLearn: true } : {}), ...(features.awbFit ? { awbFit: true } : {}), ...(features.brightAuto ? { brightAuto: features.brightAuto === 'balanced' ? 'balanced' as const : 'bright' as const } : {}), adjSoftFocus: !!features.adjSoftFocus, ...(features.dateStamp ? { dateStamp: true } : {}), ...(features.monoUnlock ? { monoUnlock: true } : {}), ...(slots.length > 0 ? { extraSlots: [...slots] } : {}), ...(shutdown ? { shutdown } : {}), ...(features.guard ? { guard: true } : {}), ...(cinema.length > 0 ? { cinemaHalation: Object.fromEntries(cinema.map((id) => [id, true])) } : {}), ...(features.lookLayout ? { lookLayout: features.lookLayout } : {}), ...(features.directFlash ? { directFlash: true } : {}), ...(features.hdrGainMap ? { hdrGainMap: true } : {}), ...(adjSlots > 0 ? { adjSlots } : {}) } };
 }

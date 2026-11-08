@@ -36,6 +36,46 @@
     [
       "core/src/fw/index.ts",
       "core/src/fw/gr4v120/index.ts"
+    ],
+    [
+      "tools/re/awb_ref.py",
+      "tools/gr4v120/re/awb_ref.py"
+    ],
+    [
+      "tools/re/awb_emu_check.py",
+      "tools/gr4v120/re/awb_emu_check.py"
+    ],
+    [
+      "tools/re/fwemu.py",
+      "tools/gr4v120/re/fwemu.py"
+    ],
+    [
+      "tools/re/fwlib.py",
+      "tools/gr4v120/re/fwlib.py"
+    ],
+    [
+      "tools/re/emuutil.py",
+      "tools/gr4v120/re/emuutil.py"
+    ],
+    [
+      "tools/re/hcommon.py",
+      "tools/gr4v120/re/hcommon.py"
+    ],
+    [
+      "tools/re/griv_env.py",
+      "tools/gr4v120/re/griv_env.py"
+    ],
+    [
+      "tools/re/shadow_ref.py",
+      "tools/gr4v120/re/shadow_ref.py"
+    ],
+    [
+      "tools/re/shadow_emu.py",
+      "tools/gr4v120/re/shadow_emu.py"
+    ],
+    [
+      "tools/re/shadow_check.py",
+      "tools/gr4v120/re/shadow_check.py"
     ]
   ],
   "copies": [
@@ -86,6 +126,14 @@
     [
       "tools/adjslots",
       "tools/gr4v120/adjslots"
+    ],
+    [
+      "tools/awbml",
+      "tools/gr4v120/awbml"
+    ],
+    [
+      "tools/shadowml",
+      "tools/gr4v120/shadowml"
     ]
   ],
   "exclude": [
@@ -141,6 +189,38 @@
     [
       "parents[2]",
       "parents[3]"
+    ],
+    [
+      "tools/awbml/",
+      "tools/gr4v120/awbml/"
+    ],
+    [
+      "tools/shadowml/",
+      "tools/gr4v120/shadowml/"
+    ],
+    [
+      "ROOT = HERE.parent.parent",
+      "ROOT = HERE.parents[2]"
+    ],
+    [
+      "/ 'fw' / 'aspect'",
+      "/ 'fw' / 'gr4v120' / 'aspect'"
+    ],
+    [
+      "0x57480",
+      "0x58500"
+    ],
+    [
+      "0x558372dc",
+      "0x5583901c"
+    ],
+    [
+      "from '../../aspect/build'",
+      "from './build'"
+    ],
+    [
+      "from '../../aspect/arm'",
+      "from './arm'"
     ]
   ],
   "generated": [
@@ -183,6 +263,14 @@
     ],
     [
       "python3",
+      "tools/gr4v120/awbml/gen.py"
+    ],
+    [
+      "python3",
+      "tools/gr4v120/shadowml/gen.py"
+    ],
+    [
+      "python3",
       "tools/port/native_scan.py",
       "tools/port/gr4-120-map.json",
       "core/src/fw/gr4v120/aspect/native.ts",
@@ -192,7 +280,9 @@
       "core/src/fw/gr4v120/aspect/shutdown-code.ts",
       "core/src/fw/gr4v120/aspect/slotparams-native.ts",
       "core/src/fw/gr4v120/aspect/hdrgain-code.ts",
-      "core/src/fw/gr4v120/aspect/adjslots-code.ts"
+      "core/src/fw/gr4v120/aspect/adjslots-code.ts",
+      "core/src/fw/gr4v120/aspect/awbml-code.ts",
+      "core/src/fw/gr4v120/aspect/shadowml-code.ts"
     ]
   ],
   "old_marker": "1.11"

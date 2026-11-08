@@ -166,6 +166,15 @@ export interface RatioPreview {
 
 /** What a firmware file found on a card (or in a backup) is, compared with the official one. */
 export interface FirmwareSummary {
+  /** Learned AWB for plain Auto; independent of the fitted fallback tables. */
+  awbLearn?: boolean;
+  /** Learned Shadow Correction Auto. */
+  shadowLearn?: boolean;
+  /** Fitted plain-Auto fallback tables. */
+  awbFit?: boolean;
+  /** Brighter Auto backlight curve; true selects bright. */
+  brightAuto?: boolean | 'bright' | 'balanced';
+
   sha256: string;
   /** `official`: the unmodified file; `modified`: a valid 1.11 container with changes; `bridge`: the 1.12 bridge firmware; `unknown`: anything else. */
   kind: 'official' | 'modified' | 'bridge' | 'unknown';
@@ -212,6 +221,15 @@ export interface FirmwareSummary {
 
 /** Additions besides the slots and the ratios. */
 export interface BuildOptions {
+  /** Learned AWB for plain Auto; independent of the fitted fallback tables. */
+  awbLearn?: boolean;
+  /** Learned Shadow Correction Auto. */
+  shadowLearn?: boolean;
+  /** Fitted plain-Auto fallback tables. */
+  awbFit?: boolean;
+  /** Brighter Auto backlight curve; true selects bright. */
+  brightAuto?: boolean | 'bright' | 'balanced';
+
   /** Put soft focus (off / weak / medium / strong) on the ADJ lever. */
   adjSoftFocus?: boolean;
   /** Date imprint on the JPEG, switched in the camera's menu. */
@@ -710,6 +728,7 @@ export class Engine {
     const revision = this.g4.readBuildRevision(dec.subarray(this.g4.RTOS_OFFSET, rtosEnd + rtosGrowth)) ?? 1;
     const modified = (verified: boolean, ratios: BuiltRatio[], slotsFrom: Uint8Array): FirmwareSummary => ({
       sha256, kind: 'modified', changedBytes: countChangedBytes(aligned, this.decoded) + rtosGrowth + iconGrowth + resGrowth, verified, slots: describe(slotsFrom), ratios, softFocus: this.g4.clarityChanges(slotsFrom),
+      ...(features.awbLearn ? { awbLearn: true } : {}), ...(features.shadowLearn ? { shadowLearn: true } : {}), ...(features.awbFit ? { awbFit: true } : {}), ...(features.brightAuto ? { brightAuto: features.brightAuto } : {}),
       adjSoftFocus: !!features.adjSoftFocus,
       dateStamp: !!features.dateStamp,
       monoUnlock: !!features.monoUnlock,
@@ -877,7 +896,7 @@ export class Engine {
    * Without it the result is what GR Mod 0.6.1 and earlier made. `refine` (.cube only, default
    * off) adds the guarded CIEDE2000 refinement. GR III / IIIx take .xmp and .cube too.
    */
-  convertPreset(kind: 'xmp' | 'cube', text: string, onProgress?: (f: number) => void, options: { post?: boolean; refine?: boolean; hue?: boolean; legacyFit?: boolean } = {}): PresetResult {
+  convertPreset(kind: 'xmp' | 'cube', text: string, onProgress?: (f: number) => void, options: { post?: boolean; refine?: boolean; hue?: boolean; additiveHue?: boolean; keepWhite?: boolean; legacyFit?: boolean } = {}): PresetResult {
     if (this.info.family === 'gr3x') {
       // The second (post-curve) matrix, as on GR IV: GR III's matrix module has the stage (films only).
       const post = options.post !== false;
@@ -894,7 +913,7 @@ export class Engine {
     const post = options.post !== false;
     // Hue sectors (experimental, added slots only): fitted against Standard's own block of this firmware.
     const hueStd = options.hue === true && post ? this.standardHue() : undefined;
-    const c = kind === 'xmp' ? convertXmp(text, { onProgress, post, ...(hueStd ? { hueStd } : {}) }) : convertCube(text, { onProgress, post, refine: options.refine === true, ...(hueStd ? { hueStd } : {}) });
+    const c = kind === 'xmp' ? convertXmp(text, { additiveHue: options.additiveHue, keepWhite: options.keepWhite, onProgress, post, ...(hueStd ? { hueStd } : {}) }) : convertCube(text, { additiveHue: options.additiveHue, keepWhite: options.keepWhite, onProgress, post, refine: options.refine === true, ...(hueStd ? { hueStd } : {}) });
     const q = quantizeSlot(c.params, this.mStdQ13);
     return { kind: c.kind, title: c.title, meanDE: c.meanDE, p95DE: c.p95DE, meanDE2000: c.meanDE2000, p95DE2000: c.p95DE2000, warnings: c.warnings, unsupported: c.unsupported, params: c.params, matrixQ13: q.matrixQ13, curves: q.curves, ...(q.postQ9 ? { postQ9: q.postQ9 } : {}), ...(c.hueQ10 ? { hueQ10: c.hueQ10 } : {}) };
   }
@@ -924,6 +943,12 @@ export class Engine {
 
   /** Build a firmware file. The result has passed the built-in self-check (otherwise this throws). */
   async buildFirmware(requests: SlotRequest[], ratios: readonly RatioSpec[] = [], softFocus: readonly SoftFocusRequest[] = [], options: BuildOptions = {}): Promise<FirmwareBuild> {
+    for (const key of ['awbLearn', 'shadowLearn', 'awbFit'] as const)
+      if (options[key] !== undefined && typeof options[key] !== 'boolean') throw new FirmwareError('bad-edit', `${key} must be boolean`);
+    if (options.brightAuto !== undefined && ![true, false, 'bright', 'balanced'].includes(options.brightAuto))
+      throw new FirmwareError('bad-edit', 'brightAuto must be boolean, bright or balanced');
+    if (this.info.family !== 'gr4' && (options.awbLearn || options.shadowLearn || options.awbFit || options.brightAuto))
+      throw new FirmwareError('bad-edit', 'learned AWB/shadow, fitted AWB and bright Auto require GR IV firmware');
     if (this.info.family === 'gr3x') {
       if (Object.entries(options).some(([k, v]) => k !== 'monoUnlock' && k !== 'adjSoftFocus' && k !== 'dateStamp' && k !== 'shutdownPictures' && k !== 'filmCount' && k !== 'guard' && k !== 'lookLayout' && k !== 'gr3Round' && v !== undefined && v !== false && !(Array.isArray(v) && !v.length)))
         throw new FirmwareError('gr3x-unsupported', 'added Image Control slots and the test settings of the date imprint are not ported to GR III / IIIx');
@@ -1022,9 +1047,9 @@ export class Engine {
     if (adjSoftFocus && clarity.length > 0) throw new FirmwareError('bad-clarity', 'soft focus on the ADJ lever and on the clarity table cannot be combined');
     if (dateStamp && clarity.length > 0) throw new FirmwareError('bad-clarity', 'the date imprint cannot be combined with the clarity-table soft focus of 0.4.x');
     if (extraSlots.length > 0 && clarity.length > 0) throw new FirmwareError('bad-clarity', 'added slots cannot be combined with the clarity-table soft focus of 0.4.x');
-    if (edits.length === 0 && ratios.length === 0 && clarity.length === 0 && !adjSoftFocus && !dateStamp && !monoUnlock && extraSlots.length === 0 && pictures.length === 0 && !lookLayout && !directFlash && adjSlots === 5 && !hdrGainMap) throw new FirmwareError('bad-edit', 'nothing to change');
+    if (edits.length === 0 && ratios.length === 0 && clarity.length === 0 && !adjSoftFocus && !dateStamp && !monoUnlock && extraSlots.length === 0 && pictures.length === 0 && !lookLayout && !directFlash && adjSlots === 5 && !hdrGainMap && !options.awbLearn && !options.shadowLearn && !options.awbFit && !options.brightAuto) throw new FirmwareError('bad-edit', 'nothing to change');
     if (Object.keys(cinemaHalation).length > 0 && clarity.length > 0) throw new FirmwareError('bad-clarity', 'halation cannot be combined with the clarity-table soft focus of 0.4.x');
-    const features = { adjSoftFocus, guard: clarity.length === 0 && options.guard !== false, ...(Object.keys(cinemaHalation).length > 0 ? { cinemaHalation } : {}), ...(dateStamp ? { dateStamp } : {}), ...(monoUnlock ? { monoUnlock } : {}), ...(extraSlots.length > 0 ? { extraSlots } : {}), ...(pictures.length > 0 ? { shutdown: { pictures, factory: this.g4.aspect.factoryShutdownJpegs(this.decoded) } } : {}), ...(lookLayout ? { lookLayout } : {}), ...(directFlash ? { directFlash } : {}), ...(adjSlots > 5 ? { adjSlots } : {}), ...(hdrGainMap ? { hdrGainMap } : {}) };
+    const features = { ...(options.awbLearn ? { awbLearn: true } : {}), ...(options.shadowLearn ? { shadowLearn: true } : {}), ...(options.awbFit ? { awbFit: true } : {}), ...(options.brightAuto ? { brightAuto: options.brightAuto } : {}), adjSoftFocus, guard: clarity.length === 0 && options.guard !== false, ...(Object.keys(cinemaHalation).length > 0 ? { cinemaHalation } : {}), ...(dateStamp ? { dateStamp } : {}), ...(monoUnlock ? { monoUnlock } : {}), ...(extraSlots.length > 0 ? { extraSlots } : {}), ...(pictures.length > 0 ? { shutdown: { pictures, factory: this.g4.aspect.factoryShutdownJpegs(this.decoded) } } : {}), ...(lookLayout ? { lookLayout } : {}), ...(directFlash ? { directFlash } : {}), ...(adjSlots > 5 ? { adjSlots } : {}), ...(hdrGainMap ? { hdrGainMap } : {}) };
     const test = {
       ...(options && options.dateStampFixed ? { dateStampFixed: options.dateStampFixed, dateStampDiag: !!options.dateStampDiag } : {}),
       ...(options && options.halationDiag ? { halationDiag: true } : {}),

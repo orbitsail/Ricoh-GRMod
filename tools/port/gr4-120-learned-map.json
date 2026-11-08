@@ -1,0 +1,1397 @@
+{
+  "coverage": 0.9592834666034442,
+  "old": "private official 1.11 RTOS",
+  "new": "private official 1.20 RTOS",
+  "addresses": {
+    "0x53000000": {
+      "new": "0x53000000",
+      "how": "override",
+      "ok": true,
+      "why": "RTOS load address",
+      "files": [
+        "tools/awbml/awbml.c",
+        "tools/awbml/ref.py",
+        "tools/awbml/test_fw.py",
+        "tools/re/awb_ref.py",
+        "tools/re/fwemu.py",
+        "tools/re/fwlib.py",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x53000460": {
+      "new": "0x53000460",
+      "how": "override",
+      "ok": true,
+      "why": "fork A: zero-fill end literal: the start-up literal is at the same address in both images (heap gap words 0x55839020..0x55839038 follow it)",
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x53153864": {
+      "new": "0x53154aa4",
+      "how": "aligned + refs 0x53154aa4x273",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53153ea4": {
+      "new": "0x531550e4",
+      "how": "aligned + refs 0x531550e4x70",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5326811c": {
+      "new": "0x53269f74",
+      "how": "aligned + refs 0x53269f74x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/brightauto.ts"
+      ]
+    },
+    "0x53268198": {
+      "new": "0x53269ff0",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/brightauto.ts"
+      ]
+    },
+    "0x532681a4": {
+      "new": "0x53269ffc",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/brightauto.ts"
+      ]
+    },
+    "0x532681c4": {
+      "new": "0x5326a01c",
+      "how": "aligned + refs 0x5326a01cx1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/brightauto.ts"
+      ]
+    },
+    "0x532681cc": {
+      "new": "0x5326a024",
+      "how": "aligned + refs 0x5326a024x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/brightauto.ts"
+      ]
+    },
+    "0x538d3298": {
+      "new": "0x538fabc0",
+      "how": "aligned + refs 0x538fabc0x25",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x538e09b0": {
+      "new": "0x539084bc",
+      "how": "aligned + refs 0x539084bcx6263",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/awbml/test_fw.py",
+        "tools/re/fwemu.py",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x538e09ec": {
+      "new": "0x539084f8",
+      "how": "aligned + refs 0x539084f8x5962",
+      "ok": true,
+      "files": [
+        "tools/re/fwemu.py"
+      ]
+    },
+    "0x538e0a24": {
+      "new": "0x53908530",
+      "how": "aligned + refs 0x53908530x552",
+      "ok": true,
+      "files": [
+        "tools/re/fwemu.py"
+      ]
+    },
+    "0x538e0a60": {
+      "new": "0x5390856c",
+      "how": "aligned + refs 0x5390856cx698",
+      "ok": true,
+      "files": [
+        "tools/re/fwemu.py"
+      ]
+    },
+    "0x538ed930": {
+      "new": "0x539154f8",
+      "how": "override",
+      "ok": true,
+      "why": "the assertion function: aligned, 8710 references agree",
+      "files": [
+        "tools/re/fwemu.py"
+      ]
+    },
+    "0x538f75fc": {
+      "new": "0x5391f1d4",
+      "how": "aligned + refs 0x5391f1d4x6",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/awbml/test_fw.py",
+        "tools/re/shadow_emu.py",
+        "tools/shadowml/stack_fw.py",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x5391f084": {
+      "new": "0x53947084",
+      "how": "aligned + refs 0x53947084x1",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_ref.py"
+      ]
+    },
+    "0x5391f230": {
+      "new": "0x53947230",
+      "how": "aligned + refs 0x53947230x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/re/shadow_emu.py",
+        "tools/re/shadow_ref.py",
+        "tools/shadowml/shadowml.c",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x5391f240": {
+      "new": "0x53947240",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f258": {
+      "new": "0x53947258",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f334": {
+      "new": "0x53947334",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f3a0": {
+      "new": "0x539473a0",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f3a4": {
+      "new": "0x539473a4",
+      "how": "aligned + refs 0x539473a4x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/awbml/test_fw.py",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x5391f3a8": {
+      "new": "0x539473a8",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ]
+    },
+    "0x5391f448": {
+      "new": "0x53947448",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f4d8": {
+      "new": "0x539474d8",
+      "how": "aligned + refs 0x539474d8x2",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x5391f4e8": {
+      "new": "0x539474e8",
+      "how": "aligned + refs 0x539474e8x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f4f0": {
+      "new": "0x539474f0",
+      "how": "aligned + refs 0x539474f0x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f508": {
+      "new": "0x53947508",
+      "how": "aligned + refs 0x53947508x3",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f784": {
+      "new": "0x53947784",
+      "how": "aligned + refs 0x53947784x2",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x5391f800": {
+      "new": "0x53947800",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x5391f804": {
+      "new": "0x53947804",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x53933d80": {
+      "new": "0x5395bde4",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/awbml/awbml.c"
+      ],
+      "why": "instruction before still settings builder: BL 53a786c0 -> 53aa08d4; next entry relocated and reordered"
+    },
+    "0x53933d84": {
+      "new": "0x5395bde8",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/awbml/test_fw.py"
+      ],
+      "why": "still S builder entry: old leading literal vldr removed; new mov ip,sp entry is target of mapped manager call 5395c424; quantisation delegated to 538fb018/68/b8"
+    },
+    "0x53933d88": {
+      "new": "0x5395bde8",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ],
+      "why": "comment alias for old builder prologue (old entry starts four bytes earlier with vldr); new builder entry confirmed by BL 5395c424"
+    },
+    "0x53933f68": {
+      "new": "0x5395bfd4",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ]
+    },
+    "0x53934398": {
+      "new": "0x5395c3fc",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ],
+      "why": "manager prologue and BL of still S builder matched side by side; following +794/796/798/79a field accesses identical"
+    },
+    "0x53934898": {
+      "new": "0x5395c8fc",
+      "how": "aligned + refs 0x5395c8fcx1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53934920": {
+      "new": "0x5395c984",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53936748": {
+      "new": "0x5395e7ac",
+      "how": "aligned + refs 0x5395e7acx2",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbfit.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53936830": {
+      "new": "0x5395e894",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbfit.ts"
+      ]
+    },
+    "0x53936e1c": {
+      "new": "0x5395ee80",
+      "how": "aligned + refs 0x5395ee80x3",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53936fec": {
+      "new": "0x5395f050",
+      "how": "aligned + refs 0x5395f050x3",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py"
+      ]
+    },
+    "0x539371e4": {
+      "new": "0x5395f248",
+      "how": "aligned + refs 0x5395f248x4",
+      "ok": true,
+      "files": [
+        "tools/re/emuutil.py"
+      ]
+    },
+    "0x539376a8": {
+      "new": "0x5395f70c",
+      "how": "aligned + refs 0x5395f70cx4",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53937bfc": {
+      "new": "0x5395fc60",
+      "how": "aligned + refs 0x5395fc60x3",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53937cb0": {
+      "new": "0x5395fd14",
+      "how": "aligned + refs 0x5395fd14x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53937ef4": {
+      "new": "0x5395ff58",
+      "how": "aligned + refs 0x5395ff58x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393808c": {
+      "new": "0x539600f0",
+      "how": "aligned + refs 0x539600f0x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py",
+        "tools/re/hcommon.py"
+      ]
+    },
+    "0x53938508": {
+      "new": "0x5396056c",
+      "how": "aligned + refs 0x5396056cx1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393883c": {
+      "new": "0x539608a0",
+      "how": "aligned + refs 0x539608a0x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53938970": {
+      "new": "0x539609d4",
+      "how": "aligned + refs 0x539609d4x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53938b28": {
+      "new": "0x53960b8c",
+      "how": "aligned + refs 0x53960b8cx1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/awbml/test_fw.py",
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53938b40": {
+      "new": "0x53960ba4",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts"
+      ]
+    },
+    "0x53938b4c": {
+      "new": "0x53960bb0",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts"
+      ]
+    },
+    "0x53938b54": {
+      "new": "0x53960bb8",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts"
+      ]
+    },
+    "0x53938e2c": {
+      "new": "0x53960e90",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/awbml/test_fw.py"
+      ]
+    },
+    "0x53938e30": {
+      "new": "0x53960e94",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ]
+    },
+    "0x53938e38": {
+      "new": "0x53960e9c",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ]
+    },
+    "0x53938e50": {
+      "new": "0x53960eb4",
+      "how": "aligned + refs 0x53960eb4x1",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ]
+    },
+    "0x53938e78": {
+      "new": "0x53960edc",
+      "how": "aligned + refs 0x53960edcx1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53938f44": {
+      "new": "0x53960fa8",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x53939028": {
+      "new": "0x5396108c",
+      "how": "aligned + refs 0x5396108cx2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x539391d8": {
+      "new": "0x5396123c",
+      "how": "aligned + refs 0x5396123cx1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py"
+      ]
+    },
+    "0x53939218": {
+      "new": "0x5396127c",
+      "how": "aligned + refs 0x5396127cx1",
+      "ok": true,
+      "files": [
+        "tools/re/emuutil.py"
+      ]
+    },
+    "0x5393926c": {
+      "new": "0x539612d0",
+      "how": "aligned + refs 0x539612d0x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393931c": {
+      "new": "0x53961380",
+      "how": "aligned + refs 0x53961380x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393ba34": {
+      "new": "0x53963a98",
+      "how": "aligned + refs 0x53963a98x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393bb04": {
+      "new": "0x53963b68",
+      "how": "aligned + refs 0x53963b68x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x5393bb60": {
+      "new": "0x53963bc4",
+      "how": "aligned + refs 0x53963bc4x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x5393bbbc": {
+      "new": "0x53963c20",
+      "how": "aligned + refs 0x53963c20x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393bd2c": {
+      "new": "0x53963d90",
+      "how": "aligned + refs 0x53963d90x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393bd64": {
+      "new": "0x53963dc8",
+      "how": "aligned + refs 0x53963dc8x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393bdb0": {
+      "new": "0x53963e14",
+      "how": "aligned + refs 0x53963e14x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c05c": {
+      "new": "0x539640c0",
+      "how": "aligned + refs 0x539640c0x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c354": {
+      "new": "0x539643b8",
+      "how": "aligned + refs 0x539643b8x2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c388": {
+      "new": "0x539643ec",
+      "how": "aligned + refs 0x539643ecx1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c39c": {
+      "new": "0x53964400",
+      "how": "aligned + refs 0x53964400x4",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c4d4": {
+      "new": "0x53964538",
+      "how": "aligned + refs 0x53964538x5",
+      "ok": true,
+      "files": [
+        "tools/re/awb_emu_check.py",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c7b0": {
+      "new": "0x53964814",
+      "how": "aligned + refs 0x53964814x19",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c808": {
+      "new": "0x5396486c",
+      "how": "aligned + refs 0x5396486cx2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c870": {
+      "new": "0x539648d4",
+      "how": "aligned + refs 0x539648d4x2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393c8d8": {
+      "new": "0x5396493c",
+      "how": "aligned + refs 0x5396493cx2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393caf0": {
+      "new": "0x53964b54",
+      "how": "aligned + refs 0x53964b54x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393cbc4": {
+      "new": "0x53964c28",
+      "how": "aligned + refs 0x53964c28x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393cd00": {
+      "new": "0x53964d64",
+      "how": "aligned + refs 0x53964d64x11",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5393e444": {
+      "new": "0x53966500",
+      "how": "aligned + refs 0x53966500x2",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x5393e460": {
+      "new": "0x5396651c",
+      "how": "aligned + refs 0x5396651cx1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x5393e478": {
+      "new": "0x53966534",
+      "how": "aligned + refs 0x53966534x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x5393e5ac": {
+      "new": "0x53966668",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x53dba138": {
+      "new": "0x53de4968",
+      "how": "aligned + refs 0x53de4968x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/brightauto.ts"
+      ]
+    },
+    "0x53dba13c": {
+      "new": "0x53de496c",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/brightauto.ts"
+      ]
+    },
+    "0x53f8ede8": {
+      "new": "0x53fc54d8",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/awbml/awbml.c",
+        "tools/awbml/ref.py",
+        "tools/awbml/test_fw.py"
+      ],
+      "why": "ComPropIf vtable: 4 relocated method pointers followed by same OnSet/ComPropIf/OnMessage/OnSetSync strings; method references agree"
+    },
+    "0x53fd8e08": {
+      "new": "0x5400f9c8",
+      "how": "aligned + refs 0x5400f9c8x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x54000000": {
+      "new": "0x54000000",
+      "how": "override",
+      "ok": true,
+      "why": "scan upper bound only; conservative code-reference scanning boundary",
+      "files": [
+        "tools/awbml/test_fw.py",
+        "tools/re/fwlib.py"
+      ]
+    },
+    "0x54048532": {
+      "new": "0x5407f1ea",
+      "how": "aligned + refs 0x5407f1eax1",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_ref.py"
+      ]
+    },
+    "0x54048534": {
+      "new": "0x5407f1ec",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_ref.py"
+      ]
+    },
+    "0x54048d34": {
+      "new": "0x5407f9ec",
+      "how": "aligned + refs 0x5407f9ecx1",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_ref.py"
+      ]
+    },
+    "0x54048f3c": {
+      "new": "0x5407fbf4",
+      "how": "aligned + refs 0x5407fbf4x1",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_ref.py"
+      ]
+    },
+    "0x54049384": {
+      "new": "0x5408003c",
+      "how": "aligned + refs 0x5408003cx1",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_ref.py"
+      ]
+    },
+    "0x5404938c": {
+      "new": "0x54080044",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/awbml/test_fw.py",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x54049390": {
+      "new": "0x54080048",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ]
+    },
+    "0x540493a0": {
+      "new": "0x54080058",
+      "how": "aligned + refs 0x54080058x1",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_ref.py"
+      ]
+    },
+    "0x541db4b4": {
+      "new": "0x54212834",
+      "how": "aligned + refs 0x54212834x2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x541db4e4": {
+      "new": "0x54212864",
+      "how": "aligned + refs 0x54212864x3",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x541db508": {
+      "new": "0x54212888",
+      "how": "aligned + refs 0x54212888x2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5421b510": {
+      "new": "0x54252890",
+      "how": "aligned + refs 0x54252890x2",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/re/awb_emu_check.py"
+      ]
+    },
+    "0x5421b548": {
+      "new": "0x542528c8",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5421b6b0": {
+      "new": "0x54252a30",
+      "how": "aligned + refs 0x54252a30x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5421b734": {
+      "new": "0x54252ab4",
+      "how": "aligned + refs 0x54252ab4x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x542fd750": {
+      "new": "0x54334ad0",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x542fd758": {
+      "new": "0x54334ad8",
+      "how": "aligned + refs 0x54334ad8x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x542fdd74": {
+      "new": "0x543350f4",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x542fdd84": {
+      "new": "0x54335104",
+      "how": "aligned + refs 0x54335104x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x542fe398": {
+      "new": "0x54335718",
+      "how": "aligned + refs 0x54335718x2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x542fe420": {
+      "new": "0x543357a0",
+      "how": "aligned + refs 0x543357a0x2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x542fe464": {
+      "new": "0x543357e4",
+      "how": "aligned + refs 0x543357e4x2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x542fe760": {
+      "new": "0x54335ae0",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x542fe770": {
+      "new": "0x54335af0",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x542fe778": {
+      "new": "0x54335af8",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x542fe77c": {
+      "new": "0x54335afc",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x542fe7c0": {
+      "new": "0x54335b40",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x542fe840": {
+      "new": "0x54335bc0",
+      "how": "aligned",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ]
+    },
+    "0x542fe850": {
+      "new": "0x54335bd0",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts"
+      ],
+      "why": "Atmosphere T2 vtable slot: word is mapped GET_T2 53966500; surrounding type/vtable records and relocated getters compared"
+    },
+    "0x5437b640": {
+      "new": "0x543b3100",
+      "how": "override",
+      "ok": true,
+      "why": "RAM image source: start-up literal at 0x53000450 (src, dst 0x55000000, len 0x58500)",
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py",
+        "tools/re/fwemu.py",
+        "tools/re/fwlib.py"
+      ]
+    },
+    "0x543d2ac0": {
+      "new": "0x5440b600",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/shadowml/test_fw.py"
+      ],
+      "why": "end-exclusive official RTOS length (profile RTOS_LENGTH 140b600), not a code pointer"
+    },
+    "0x543f0000": {
+      "new": "0x54430000",
+      "how": "override",
+      "ok": true,
+      "why": "upstream override: arbitrary second module link origin moved beyond 1.20 official image; no runtime allocation",
+      "files": [
+        "tools/awbml/gen.py",
+        "tools/shadowml/gen.py"
+      ]
+    },
+    "0x55000000": {
+      "new": "0x55000000",
+      "how": "refs 0x55000000x22",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/awbml/awbml.c",
+        "tools/awbml/ref.py",
+        "tools/awbml/test_fw.py",
+        "tools/re/awb_ref.py",
+        "tools/re/fwemu.py",
+        "tools/re/fwlib.py"
+      ]
+    },
+    "0x55052cf4": {
+      "new": "0x55053ce4",
+      "how": "override",
+      "ok": true,
+      "why": "YCbCr table: accessor 0x5394e00c/0x5394e014, rows of 38",
+      "files": [
+        "tools/re/fwlib.py"
+      ]
+    },
+    "0x55053138": {
+      "new": "0x55054158",
+      "how": "override",
+      "ok": true,
+      "why": "gamma descriptor table: accessor 0x5394e038/0x5394e040, rows of 38",
+      "files": [
+        "tools/re/fwlib.py"
+      ]
+    },
+    "0x55053504": {
+      "new": "0x55054554",
+      "how": "override",
+      "ok": true,
+      "why": "multi-axis table: accessor 0x5394dfe0/0x5394dfe8, rows of 38",
+      "files": [
+        "tools/re/fwlib.py"
+      ]
+    },
+    "0x55053780": {
+      "new": "0x55054800",
+      "how": "override",
+      "ok": true,
+      "why": "tone record table: movw/movt of its accessor 0x5394dfb4/0x5394dfbc (1.11 0x53925f9c), rows of 38 (mov r2,#0x26)",
+      "files": [
+        "tools/re/fwlib.py"
+      ]
+    },
+    "0x55053aec": {
+      "new": "0x55054b9c",
+      "how": "RAM image aligned + refs 0x55054b9cx1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x55053e04": {
+      "new": "0x55054eb4",
+      "how": "RAM image aligned + refs 0x55054eb4x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5505411c": {
+      "new": "0x550551cc",
+      "how": "RAM image aligned + refs 0x550551ccx1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x55054434": {
+      "new": "0x550554e4",
+      "how": "RAM image aligned + refs 0x550554e4x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x5505474c": {
+      "new": "0x550557fc",
+      "how": "RAM image aligned + refs 0x550557fcx1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x55054a64": {
+      "new": "0x55055b14",
+      "how": "RAM image aligned + refs 0x55055b14x1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x55054d7c": {
+      "new": "0x55055e2c",
+      "how": "RAM image aligned + refs 0x55055e2cx1",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbblend.ts",
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x55055094": {
+      "new": "0x55056144",
+      "how": "RAM image aligned + refs 0x55056144x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x550553ac": {
+      "new": "0x5505645c",
+      "how": "RAM image aligned + refs 0x5505645cx1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x550556c4": {
+      "new": "0x55056774",
+      "how": "RAM image aligned + refs 0x55056774x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x550559dc": {
+      "new": "0x55056a8c",
+      "how": "RAM image aligned + refs 0x55056a8cx1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x55055cf4": {
+      "new": "0x55056da4",
+      "how": "RAM image aligned + refs 0x55056da4x1",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py"
+      ]
+    },
+    "0x55379608": {
+      "new": "0x5537b298",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/awbml/awbml.c",
+        "tools/awbml/ref.py",
+        "tools/awbml/test_fw.py"
+      ],
+      "why": "ComPropIf singleton guard: old 5372b628 / new 53750010 movw/movt, bit0 test and guard construction compared"
+    },
+    "0x55379610": {
+      "new": "0x5537b2a0",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/awbml/awbml.c",
+        "tools/awbml/ref.py",
+        "tools/awbml/test_fw.py"
+      ],
+      "why": "singleton object slot is guard+8: old object at 5537960c has pointer +4, new object at 5537b29c has pointer +4; 53750048..7c initialises it"
+    },
+    "0x553a0b30": {
+      "new": "0x553a2830",
+      "how": "refs 0x553a2830x3",
+      "ok": true,
+      "files": [
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x553a0b3c": {
+      "new": "0x553a283c",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_emu.py",
+        "tools/shadowml/test_fw.py"
+      ],
+      "why": "shadow smoothing state +0xc: relocated base 553a2830 (3 unanimous references) and explicit sole reference agrees"
+    },
+    "0x553a0b40": {
+      "new": "0x553a2840",
+      "how": "refs 0x553a2840x2",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_emu.py",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x553a0b4c": {
+      "new": "0x553a284c",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/re/shadow_emu.py",
+        "tools/shadowml/test_fw.py"
+      ],
+      "why": "shadow smoothing state +0x1c: relocated base 553a2830 (3 unanimous references) and explicit sole reference agrees"
+    },
+    "0x553a130c": {
+      "new": "0x553a300c",
+      "how": "refs 0x553a300cx2",
+      "ok": true,
+      "files": [
+        "tools/re/awb_ref.py",
+        "tools/re/hcommon.py"
+      ]
+    },
+    "0x553a136c": {
+      "new": "0x553a306c",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/re/hcommon.py"
+      ],
+      "why": "AWB calibration singleton construction guard: sole relocated code reference agrees; calibration object base moved by +1d00"
+    },
+    "0x55800000": {
+      "new": "0x55800000",
+      "how": "override",
+      "ok": true,
+      "why": "emulator-only heap address; not a firmware slot or image pointer",
+      "files": [
+        "tools/re/fwemu.py"
+      ]
+    },
+    "0x558372d4": {
+      "new": "0x55839014",
+      "how": "override",
+      "ok": true,
+      "why": "shadow scratch slot: new zero-fill-end 0x55839014; HDR diagnostic counter combination refused",
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x558372dc": {
+      "new": "0x5583901c",
+      "how": "override",
+      "ok": true,
+      "why": "learned AWB slot: relocated original heap-gap offset +8 to new gap 0x55839014+8; conflicts with HDR state, combinations explicitly refused",
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "tools/awbml/test_fw.py"
+      ]
+    },
+    "0x558372fc": {
+      "new": "0x5583903c",
+      "how": "override",
+      "ok": true,
+      "why": "shadow throttle: last gap word 0x5583903c; halation/direct-flash diagnostics combination refused",
+      "files": [
+        "core/src/fw/aspect/shadowml.ts",
+        "tools/shadowml/test_fw.py"
+      ]
+    },
+    "0x55837300": {
+      "new": "0x55839040",
+      "how": "override",
+      "ok": true,
+      "why": "heap start: movw/movt at 0x530668f8 and 0x5315f0f0 (1.11 0x530656b4, 0x5315deb0); 44 bytes after the zero fill end, as in 1.11",
+      "files": [
+        "core/src/fw/aspect/awbml.ts",
+        "core/src/fw/aspect/shadowml.ts"
+      ]
+    },
+    "0x55a10000": {
+      "new": "0x55a10000",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ],
+      "why": "emulator-only fake property-store buffers, not firmware addresses"
+    },
+    "0x55a20000": {
+      "new": "0x55a20000",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ],
+      "why": "emulator-only fake property-store buffers, not firmware addresses"
+    },
+    "0x55a30000": {
+      "new": "0x55a30000",
+      "how": "override",
+      "ok": true,
+      "files": [
+        "tools/awbml/test_fw.py"
+      ],
+      "why": "emulator-only fake property-store buffers, not firmware addresses"
+    }
+  }
+}

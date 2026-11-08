@@ -1,0 +1,161 @@
+{
+  "about": "M: independently switched learned AWB/shadow, fitted AWB and bright Auto port; stock 1.11 to 1.20",
+  "map": "tools/port/gr4-120-learned-map.json",
+  "patch": "tools/port/gr4-120-learned.patch",
+  "relink": true,
+  "files": [
+    [
+      "core/src/fw/aspect/brightauto.ts",
+      "core/src/fw/gr4v120/aspect/brightauto.ts"
+    ],
+    [
+      "core/src/fw/aspect/awbfit.ts",
+      "core/src/fw/gr4v120/aspect/awbfit.ts"
+    ],
+    [
+      "core/src/fw/aspect/shadowml.ts",
+      "core/src/fw/gr4v120/aspect/shadowml.ts"
+    ],
+    [
+      "core/src/fw/aspect/shadowml-code.ts",
+      "core/src/fw/gr4v120/aspect/shadowml-code.ts"
+    ],
+    [
+      "core/src/fw/aspect/awbml-data.ts",
+      "core/src/fw/gr4v120/aspect/awbml-data.ts"
+    ],
+    [
+      "core/src/fw/aspect/awbml.ts",
+      "core/src/fw/gr4v120/aspect/awbml.ts"
+    ],
+    [
+      "core/src/fw/aspect/awbblend.ts",
+      "core/src/fw/gr4v120/aspect/awbblend.ts"
+    ],
+    [
+      "core/src/fw/aspect/awbml-code.ts",
+      "core/src/fw/gr4v120/aspect/awbml-code.ts"
+    ],
+    [
+      "core/src/fw/aspect/awbfit-data.ts",
+      "core/src/fw/gr4v120/aspect/awbfit-data.ts"
+    ],
+    [
+      "core/src/fw/aspect/shadowml-data.ts",
+      "core/src/fw/gr4v120/aspect/shadowml-data.ts"
+    ],
+    [
+      "tools/re/awb_ref.py",
+      "tools/gr4v120/re/awb_ref.py"
+    ],
+    [
+      "tools/re/awb_emu_check.py",
+      "tools/gr4v120/re/awb_emu_check.py"
+    ],
+    [
+      "tools/re/fwemu.py",
+      "tools/gr4v120/re/fwemu.py"
+    ],
+    [
+      "tools/re/fwlib.py",
+      "tools/gr4v120/re/fwlib.py"
+    ],
+    [
+      "tools/re/emuutil.py",
+      "tools/gr4v120/re/emuutil.py"
+    ],
+    [
+      "tools/re/hcommon.py",
+      "tools/gr4v120/re/hcommon.py"
+    ],
+    [
+      "tools/re/griv_env.py",
+      "tools/gr4v120/re/griv_env.py"
+    ],
+    [
+      "tools/re/shadow_ref.py",
+      "tools/gr4v120/re/shadow_ref.py"
+    ],
+    [
+      "tools/re/shadow_emu.py",
+      "tools/gr4v120/re/shadow_emu.py"
+    ],
+    [
+      "tools/re/shadow_check.py",
+      "tools/gr4v120/re/shadow_check.py"
+    ]
+  ],
+  "copies": [
+    [
+      "tools/awbml",
+      "tools/gr4v120/awbml"
+    ],
+    [
+      "tools/shadowml",
+      "tools/gr4v120/shadowml"
+    ]
+  ],
+  "rename": [
+    [
+      "fw/aspect/",
+      "fw/gr4v120/aspect/"
+    ],
+    [
+      "tools/awbml/",
+      "tools/gr4v120/awbml/"
+    ],
+    [
+      "tools/shadowml/",
+      "tools/gr4v120/shadowml/"
+    ],
+    [
+      "ROOT = HERE.parent.parent",
+      "ROOT = HERE.parents[2]"
+    ],
+    [
+      "/ 'fw' / 'aspect'",
+      "/ 'fw' / 'gr4v120' / 'aspect'"
+    ],
+    [
+      "0x57480",
+      "0x58500"
+    ],
+    [
+      "0x558372dc",
+      "0x5583901c"
+    ],
+    [
+      "from '../../aspect/build'",
+      "from './build'"
+    ],
+    [
+      "from '../../aspect/arm'",
+      "from './arm'"
+    ]
+  ],
+  "exclude": [
+    "__pycache__",
+    "out"
+  ],
+  "generated": [
+    "-code\\.ts$",
+    "-data\\.ts$"
+  ],
+  "post": [
+    [
+      "python3",
+      "tools/gr4v120/awbml/gen.py"
+    ],
+    [
+      "python3",
+      "tools/gr4v120/shadowml/gen.py"
+    ],
+    [
+      "python3",
+      "tools/port/native_scan.py",
+      "tools/port/gr4-120-learned-map.json",
+      "core/src/fw/gr4v120/aspect/awbml-code.ts",
+      "core/src/fw/gr4v120/aspect/shadowml-code.ts"
+    ]
+  ]
+}
